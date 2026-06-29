@@ -153,13 +153,13 @@ Codex 规则只影响 Codex 凭证：
 
 ## 插件商店发布格式
 
-插件商店 registry 需要指向 GitHub 仓库，实际安装版本来自 GitHub latest release tag；本仓库发布版本为 `v1.0.0`，并在根目录提供 `registry.json` 作为第三方商店来源示例。
+插件商店 registry 需要声明安装资产。本仓库发布版本为 `v1.0.0`，并在根目录提供 `registry.json` 作为第三方商店来源示例。
 
 registry 示例：
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugins": [
     {
       "id": "credential-priority",
@@ -167,6 +167,18 @@ registry 示例：
       "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
       "author": "Cody292",
       "version": "1.0.0",
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://github.com/Cody292/credential-priority/releases/download/v1.0.0/credential-priority_1.0.0_linux_amd64.zip",
+            "sha256": "b0a4c1f4a53d93e3c8474136ab4593c486a456a99f851bf475175f76a2be2320",
+            "size": 5442942
+          }
+        ]
+      },
       "repository": "https://github.com/Cody292/credential-priority",
       "tags": ["credential", "management"]
     }
@@ -174,7 +186,7 @@ registry 示例：
 }
 ```
 
-`v1.0.0` Release 资产必须包含：
+`registry.json` 中的 `install.artifacts` 必须与 `v1.0.0` Release 资产一致：
 
 - `credential-priority_1.0.0_<goos>_<goarch>.zip`
 - `checksums.txt`

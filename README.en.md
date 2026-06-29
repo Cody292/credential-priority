@@ -151,13 +151,13 @@ The following endpoints require the CPA management key:
 
 ## Plugin Store Publishing Format
 
-The plugin store registry points to a GitHub repository. The actual installation version comes from the latest GitHub release tag. This repository publishes `v1.0.0` and provides `registry.json` at the repository root as a third-party store source example.
+The plugin store registry declares installable artifacts. This repository publishes `v1.0.0` and provides `registry.json` at the repository root as a third-party store source example.
 
 Registry example:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugins": [
     {
       "id": "credential-priority",
@@ -165,6 +165,18 @@ Registry example:
       "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
       "author": "Cody292",
       "version": "1.0.0",
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://github.com/Cody292/credential-priority/releases/download/v1.0.0/credential-priority_1.0.0_linux_amd64.zip",
+            "sha256": "b0a4c1f4a53d93e3c8474136ab4593c486a456a99f851bf475175f76a2be2320",
+            "size": 5442942
+          }
+        ]
+      },
       "repository": "https://github.com/Cody292/credential-priority",
       "tags": ["credential", "management"]
     }
@@ -172,7 +184,7 @@ Registry example:
 }
 ```
 
-The `v1.0.0` release must include:
+The `install.artifacts` entry in `registry.json` must match the `v1.0.0` release assets:
 
 - `credential-priority_1.0.0_<goos>_<goarch>.zip`
 - `checksums.txt`
