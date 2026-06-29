@@ -10,8 +10,6 @@ import (
 )
 
 const (
-	// ManagementAuthFieldsPath 是 CPA 更新凭证优先级的管理接口路径。
-	ManagementAuthFieldsPath = "/v0/management/auth-files/fields"
 	// ManagementAuthStatusPath 是 CPA 更新凭证禁用状态的管理接口路径。
 	ManagementAuthStatusPath = "/v0/management/auth-files/status"
 	// RedactedValue 是记录中敏感 header 和 JSON 字段的替代值。
@@ -26,16 +24,37 @@ type Header map[string][]string
 
 // AuthFile 是 host.auth.list 返回的最小凭证记录。
 type AuthFile struct {
-	Name        string        `json:"name"`
-	AuthIndex   string        `json:"auth_index"`
-	Type        string        `json:"type,omitempty"`
-	Provider    string        `json:"provider,omitempty"`
-	Status      string        `json:"status,omitempty"`
-	Disabled    bool          `json:"disabled"`
-	Unavailable bool          `json:"unavailable"`
-	Priority    int           `json:"priority"`
-	Email       string        `json:"email,omitempty"`
-	IDToken     IDTokenClaims `json:"id_token,omitempty"`
+	Name            string          `json:"name"`
+	AuthIndex       string          `json:"auth_index"`
+	Type            string          `json:"type,omitempty"`
+	Provider        string          `json:"provider,omitempty"`
+	Status          string          `json:"status,omitempty"`
+	Disabled        bool            `json:"disabled"`
+	Unavailable     bool            `json:"unavailable"`
+	Priority        int             `json:"priority"`
+	PriorityMissing bool            `json:"-"`
+	Account         string          `json:"account,omitempty"`
+	Email           string          `json:"email,omitempty"`
+	IDToken         IDTokenClaims   `json:"id_token,omitempty"`
+	RawJSON         json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON 保留 host.auth.list 返回的完整凭证 JSON，供 host.auth.save 写回时避免丢字段。
+func (f *AuthFile) UnmarshalJSON(data []byte) error {
+	type authFile AuthFile
+	var decoded authFile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*f = AuthFile(decoded)
+	_, priorityPresent := fields["priority"]
+	f.PriorityMissing = !priorityPresent
+	f.RawJSON = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 // IDTokenClaims 包含优先级规划需要的非敏感 ID token claims。
@@ -53,12 +72,21 @@ type RuntimeAuth struct {
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }
 
+// AuthDocument 是 host.auth.get 返回的物理凭证 JSON 视图。
+type AuthDocument struct {
+	AuthIndex string          `json:"auth_index"`
+	Name      string          `json:"name,omitempty"`
+	Path      string          `json:"path,omitempty"`
+	JSON      json.RawMessage `json:"json"`
+}
+
 // HTTPRequest 是替代生产路径 http.Client 的宿主管理请求类型。
 type HTTPRequest struct {
-	Method  string `json:"Method"`
-	URL     string `json:"URL"`
-	Headers Header `json:"Headers,omitempty"`
-	Body    []byte `json:"Body,omitempty"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	Method    string `json:"Method"`
+	URL       string `json:"URL"`
+	Headers   Header `json:"Headers,omitempty"`
+	Body      []byte `json:"Body,omitempty"`
 }
 
 // HTTPResponse 是 HTTPDo 返回的宿主管理响应类型。
@@ -70,10 +98,11 @@ type HTTPResponse struct {
 
 // RecordedHTTPRequest 是 HTTPDo 调用的脱敏审计视图。
 type RecordedHTTPRequest struct {
-	Method  string `json:"method"`
-	URL     string `json:"url"`
-	Headers Header `json:"headers,omitempty"`
-	Body    string `json:"body,omitempty"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	Headers   Header `json:"headers,omitempty"`
+	Body      string `json:"body,omitempty"`
 }
 
 // UnmarshalJSON 兼容官方 StatusCode/Headers/Body(base64) 和历史 status_code/body 形态。
@@ -140,6 +169,7 @@ func looksLikeBase64(value string) bool {
 // HostCallbacks 是本包依赖的最小 CPA 宿主回调面。
 type HostCallbacks interface {
 	ListAuthFiles(ctx context.Context) ([]AuthFile, error)
+	GetAuth(ctx context.Context, authIndex string) (AuthDocument, error)
 	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
@@ -148,9 +178,10 @@ type HostCallbacks interface {
 // API 是后续 credential-priority 包依赖的稳定宿主适配接口。
 type API interface {
 	ListAuthFiles(ctx context.Context) ([]AuthFile, error)
+	GetAuth(ctx context.Context, authIndex string) (AuthDocument, error)
 	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
-	PatchPriority(ctx context.Context, name string, priority int) error
+	PatchPriority(ctx context.Context, authIndex string, priority int) error
 	PatchDisabled(ctx context.Context, name string, disabled bool) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
 }

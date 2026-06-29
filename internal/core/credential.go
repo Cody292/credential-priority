@@ -1,5 +1,7 @@
 package core
 
+import "encoding/json"
+
 // Provider 标识凭证来自的上游能力域。
 type Provider string
 
@@ -10,6 +12,8 @@ const (
 	ProviderManual Provider = "manual"
 	// ProviderCodex 表示 Codex provider。
 	ProviderCodex Provider = "codex"
+	// ProviderAntigravity 表示 Antigravity provider。
+	ProviderAntigravity Provider = "antigravity"
 	// ProviderChatGPT 表示 ChatGPT provider。
 	ProviderChatGPT Provider = "chatgpt"
 	// ProviderGemini 表示 Gemini provider，首版仅用于识别为不支持。
@@ -28,6 +32,8 @@ const (
 	CredentialTypeManual CredentialType = "manual"
 	// CredentialTypeCodex 表示 Codex 凭证类型。
 	CredentialTypeCodex CredentialType = "codex"
+	// CredentialTypeAntigravity 表示 Antigravity 凭证类型。
+	CredentialTypeAntigravity CredentialType = "antigravity"
 	// CredentialTypeChatGPT 表示 ChatGPT 凭证类型。
 	CredentialTypeChatGPT CredentialType = "chatgpt"
 	// CredentialTypeGemini 表示 Gemini 凭证类型，首版不参与排序。
@@ -108,22 +114,27 @@ const (
 	StrategyCodex StrategyName = "codex"
 	// StrategyChatGPT 表示 ChatGPT detector/strategy。
 	StrategyChatGPT StrategyName = "chatgpt"
+	// StrategyAntigravity 表示 Antigravity detector/strategy。
+	StrategyAntigravity StrategyName = "antigravity"
 )
 
 // Credential 是 host auth-file 的排序领域模型快照。
 type Credential struct {
-	Name        string
-	AuthIndex   string
-	Provider    Provider
-	Type        CredentialType
-	Status      CredentialStatus
-	Disabled    bool
-	Unavailable bool
-	Priority    int
-	Email       string
-	PlanType    PlanType
-	Freshness   Freshness
-	ProbeStatus ProbeStatus
+	Name            string
+	AuthIndex       string
+	Provider        Provider
+	Type            CredentialType
+	Status          CredentialStatus
+	Disabled        bool
+	Unavailable     bool
+	Priority        int
+	PriorityMissing bool
+	Account         string
+	Email           string
+	PlanType        PlanType
+	Freshness       Freshness
+	ProbeStatus     ProbeStatus
+	RawJSON         json.RawMessage
 }
 
 // WithProbe 返回带有探测元数据的新凭证快照，不修改原始优先级或禁用状态。
