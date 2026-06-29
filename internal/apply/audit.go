@@ -134,10 +134,12 @@ func snapshotChange(change priority.Change) SnapshotChange {
 }
 
 func resultName(credential core.Credential) string {
-	if credential.Name != "" {
-		return redactString(credential.Name)
+	for _, value := range []string{credential.Account, credential.Email, credential.Name, credential.AuthIndex} {
+		if value != "" {
+			return redactString(value)
+		}
 	}
-	return redactString(credential.AuthIndex)
+	return ""
 }
 
 func target(priority int, disabled bool) Target {
