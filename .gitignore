@@ -1,2 +1,42 @@
+# 构建产物
+credential-priority
 credential-priority.h
 credential-priority.so
+credential-priority.dylib
+credential-priority.dll
+*.so
+*.dylib
+*.dll
+*.exe
+
+# 本地运行与缓存
+refresh-cache.json
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# 本地配置与敏感材料
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+management-key.txt
+*token*
+*secret*
+
+# 本地规划/草稿文档
+planning-with-files/
+AGENTS.md
+大纲.md
+git规范.md
+草稿.md
+
+# 禁止测试资产误入发布仓库
+*_test.go
+testdata/
+**/testdata/
