@@ -1,0 +1,227 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_NAME: credential-priority
+
+jobs:
+  build-posix:
+    name: Build ${{ matrix.goos }}_${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            ext: dylib
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            ext: dylib
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: so
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+            version="${version#v}"
+          fi
+
+          archive="${PLUGIN_NAME}_${version}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          mkdir -p dist package
+          CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+            -o "package/${PLUGIN_NAME}.${{ matrix.ext }}" .
+          (cd package && zip -q "../dist/${archive}" "${PLUGIN_NAME}.${{ matrix.ext }}")
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  build-windows:
+    name: Build windows_${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            msystem: UCRT64
+            cc: gcc
+          - goos: windows
+            goarch: arm64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            cc: clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          path-type: inherit
+          update: true
+          pacboy: toolchain:p
+
+      - name: Build package
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+            version="${version#v}"
+          fi
+
+          mkdir -p package
+          CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=${{ matrix.cc }} \
+            go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+            -o "package/${PLUGIN_NAME}.dll" .
+
+      - name: Archive package
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v', ''
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = "${{ inputs.tag }}" -replace '^v', ''
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $archive = "${env:PLUGIN_NAME}_${version}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          Compress-Archive -Path "package/${env:PLUGIN_NAME}.dll" -DestinationPath "dist/${archive}" -Force
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}-windows-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  build-freebsd:
+    name: Build freebsd_amd64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build package
+        uses: vmactions/freebsd-vm@v1
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          PLUGIN_NAME: ${{ env.PLUGIN_NAME }}
+        with:
+          usesh: true
+          envs: "INPUT_TAG PLUGIN_NAME"
+          prepare: |
+            pkg install -y go zip
+          run: |
+            set -eu
+            cd "${GITHUB_WORKSPACE}"
+            version="${GITHUB_REF_NAME#v}"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              version="${INPUT_TAG#v}"
+            fi
+
+            archive="${PLUGIN_NAME}_${version}_freebsd_amd64.zip"
+            mkdir -p dist package
+            CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=freebsd GOARCH=amd64 \
+              go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+              -o "package/${PLUGIN_NAME}.so" .
+            (cd package && zip -q "../dist/${archive}" "${PLUGIN_NAME}.so")
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}-freebsd-amd64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs:
+      - build-posix
+      - build-windows
+      - build-freebsd
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: ${{ env.PLUGIN_NAME }}-*
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            version="${tag#v}"
+          fi
+
+          (cd dist && sha256sum "${PLUGIN_NAME}"_*.zip > checksums.txt)
+          cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
+          ${PLUGIN_NAME} ${tag} 发布。
+
+          - 自动构建并上传 darwin_amd64、darwin_arm64、freebsd_amd64、linux_amd64、linux_arm64、windows_amd64、windows_arm64 发布包。
+          - 发布包按 CPA 插件商店格式命名，动态库位于 zip 根目录。
+          - checksums.txt 提供所有发布包的 SHA256 校验值。
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          files: |
+            dist/${{ env.PLUGIN_NAME }}_*.zip
+            dist/checksums.txt
