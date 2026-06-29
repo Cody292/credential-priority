@@ -12,16 +12,17 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   PLUGIN_NAME: credential-priority
-  GH_TOKEN: ${{ github.token }}
 
 jobs:
   build-posix:
     name: Build ${{ matrix.goos }}_${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -70,17 +71,25 @@ jobs:
 
       - name: Upload release asset
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             tag="${{ inputs.tag }}"
           fi
+          case "$tag" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
           gh release upload "${tag}" dist/*.zip --clobber
 
   build-windows:
     name: Build windows_amd64
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -129,16 +138,23 @@ jobs:
 
       - name: Upload release asset
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${env:GITHUB_REF_NAME}"
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
             $tag = "${{ inputs.tag }}"
+          }
+          if (-not $tag.StartsWith("v")) {
+            throw "release tag must start with v"
           }
           gh release upload $tag dist/*.zip --clobber
 
   build-windows-arm64:
     name: Build windows_arm64
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -175,17 +191,25 @@ jobs:
 
       - name: Upload release asset
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             tag="${{ inputs.tag }}"
           fi
+          case "$tag" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
           gh release upload "${tag}" dist/*.zip --clobber
 
   build-freebsd:
     name: Build freebsd_amd64
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -217,17 +241,25 @@ jobs:
 
       - name: Upload release asset
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             tag="${{ inputs.tag }}"
           fi
+          case "$tag" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
           gh release upload "${tag}" dist/*.zip --clobber
 
   publish-release:
     name: Publish checksums and notes
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - build-posix
       - build-windows
@@ -239,6 +271,8 @@ jobs:
 
       - name: Generate checksums and release notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
@@ -247,6 +281,10 @@ jobs:
             tag="${{ inputs.tag }}"
             version="${tag#v}"
           fi
+          case "$tag" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
 
           mkdir -p dist
           gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
