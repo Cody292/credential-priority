@@ -38,7 +38,7 @@ type whamWindow struct {
 	Scope              any `json:"scope"`
 }
 
-// ParseWhamUsage 将 wham/usage JSON 解析为只信任 weekly 窗口的 fresh probe 结果。
+// ParseWhamUsage 将 wham/usage JSON 解析为可信额度窗口的 fresh probe 结果。
 func ParseWhamUsage(raw []byte, observedAt time.Time) ProbeResult {
 	var usage whamUsage
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -46,24 +46,20 @@ func ParseWhamUsage(raw []byte, observedAt time.Time) ProbeResult {
 	if err := decoder.Decode(&usage); err != nil {
 		return failedResult(observedAt, "parse wham usage failed")
 	}
-	window, ok := pickWeeklyWindow(usage)
+	result, ok := pickEffectiveWindow(usage, observedAt)
 	if !ok {
-		return failedResult(observedAt, "weekly window unavailable")
-	}
-	resetAt := windowResetTime(observedAt, window)
-	remaining, ok := windowRemaining(window)
-	if resetAt == nil || !ok {
-		return failedResult(observedAt, "weekly window incomplete")
+		return failedResult(observedAt, "trusted quota window unavailable")
 	}
 	return ProbeResult{
-		ObservedAt:  observedAt.UTC(),
-		ResetAt:     resetAt,
-		Remaining:   int64Ptr(remaining),
-		Window:      WindowWeekly,
-		Freshness:   core.FreshnessFresh,
-		ProbeStatus: core.ProbeStatusReady,
-		Status:      StatusReady,
-		PlanType:    inferPlanType(usage.PlanType),
+		ObservedAt:        observedAt.UTC(),
+		ResetAt:           result.resetAt,
+		Remaining:         int64Ptr(result.remaining),
+		Window:            result.windowType,
+		LongWindowResetAt: result.longWindowResetAt,
+		Freshness:         core.FreshnessFresh,
+		ProbeStatus:       core.ProbeStatusReady,
+		Status:            StatusReady,
+		PlanType:          inferPlanType(usage.PlanType),
 	}
 }
 
@@ -77,16 +73,6 @@ func failedResult(observedAt time.Time, message string) ProbeResult {
 		PlanType:    core.PlanTypeUnknown,
 		Error:       message,
 	}
-}
-
-func pickWeeklyWindow(usage whamUsage) (whamWindow, bool) {
-	windows := []whamWindow{usage.RateLimit.PrimaryWindow, usage.RateLimit.SecondaryWindow}
-	for _, window := range windows {
-		if hasWindowData(window) && isWeeklyWindow(window) {
-			return window, true
-		}
-	}
-	return whamWindow{}, false
 }
 
 func hasWindowData(window whamWindow) bool {
@@ -110,18 +96,6 @@ func hasWindowData(window whamWindow) bool {
 	}
 	if _, ok := toBool(window.LimitReached); ok {
 		return true
-	}
-	return false
-}
-
-func isWeeklyWindow(window whamWindow) bool {
-	if seconds, ok := toInt64(window.LimitWindowSeconds); ok && seconds == 7*24*60*60 {
-		return true
-	}
-	for _, field := range windowMetadataStrings(window) {
-		if strings.Contains(field, "weekly") || strings.Contains(field, "week") || strings.Contains(field, "7d") || strings.Contains(field, "7 days") || strings.Contains(field, "7 day") {
-			return true
-		}
 	}
 	return false
 }
@@ -236,6 +210,17 @@ func inferPlanType(value string) core.PlanType {
 		return core.PlanTypeTeam
 	default:
 		return core.PlanTypeUnknown
+	}
+}
+
+func paidPlan(planType core.PlanType) bool {
+	switch planType {
+	case core.PlanTypePlus, core.PlanTypePro, core.PlanTypeTeam:
+		return true
+	case core.PlanTypeFree, core.PlanTypeUnknown:
+		return false
+	default:
+		return false
 	}
 }
 

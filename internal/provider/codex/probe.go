@@ -32,9 +32,10 @@ func NewProber(hostAPI httpDoer, clockSource clock) Prober {
 func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	observedAt := p.clock.Now().UTC()
 	response, err := p.host.HTTPDo(ctx, host.HTTPRequest{
-		Method:  http.MethodGet,
-		URL:     WhamUsageURL,
-		Headers: probeHeaders(request),
+		AuthIndex: request.AuthIndex,
+		Method:    http.MethodGet,
+		URL:       WhamUsageURL,
+		Headers:   probeHeaders(request),
 	})
 	if err != nil {
 		return failedProbe(request, observedAt, "host http do failed")
@@ -56,10 +57,15 @@ func failedProbe(request ProbeRequest, observedAt time.Time, message string) Pro
 }
 
 func probeHeaders(request ProbeRequest) host.Header {
+	token := "$TOKEN$"
+	if accessToken := strings.TrimSpace(request.AccessToken); accessToken != "" {
+		token = accessToken
+	}
 	headers := host.Header{
 		"Accept":        []string{"application/json"},
-		"Authorization": []string{"Bearer $TOKEN$"},
-		"User-Agent":    []string{"codex_cli_rs/0.76.0"},
+		"Authorization": []string{"Bearer " + token},
+		"Content-Type":  []string{"application/json"},
+		"User-Agent":    []string{"codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"},
 	}
 	accountID := strings.TrimSpace(request.AccountID)
 	if accountID != "" {
