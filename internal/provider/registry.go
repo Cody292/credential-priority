@@ -31,13 +31,14 @@ type probeStrategy struct {
 	nameText core.StrategyName
 }
 
-// NewRegistry 返回包含 Codex、ChatGPT 与 manual safe no-op 的默认 registry。
+// NewRegistry 返回包含 Codex、ChatGPT、Antigravity safe no-op 与 manual safe no-op 的默认 registry。
 func NewRegistry() Registry {
 	return Registry{
 		strategies: map[core.Provider]strategy{
-			core.ProviderCodex:   probeStrategy{provider: core.ProviderCodex, nameText: core.StrategyCodex},
-			core.ProviderChatGPT: probeStrategy{provider: core.ProviderChatGPT, nameText: core.StrategyChatGPT},
-			core.ProviderManual:  manualStrategy{provider: core.ProviderManual},
+			core.ProviderCodex:       probeStrategy{provider: core.ProviderCodex, nameText: core.StrategyCodex},
+			core.ProviderChatGPT:     probeStrategy{provider: core.ProviderChatGPT, nameText: core.StrategyChatGPT},
+			core.ProviderAntigravity: probeStrategy{provider: core.ProviderAntigravity, nameText: core.StrategyAntigravity},
+			core.ProviderManual:      manualStrategy{provider: core.ProviderManual},
 		},
 		manual: manualStrategy{provider: core.ProviderUnknown},
 	}
@@ -91,6 +92,8 @@ func normalizeProvider(value string) core.Provider {
 	switch normalized(value) {
 	case "codex":
 		return core.ProviderCodex
+	case "antigravity":
+		return core.ProviderAntigravity
 	case "chatgpt", "chat-gpt":
 		return core.ProviderChatGPT
 	case "manual":
@@ -108,6 +111,8 @@ func normalizeCredentialType(value string) core.Provider {
 	switch normalized(value) {
 	case "codex":
 		return core.ProviderCodex
+	case "antigravity":
+		return core.ProviderAntigravity
 	case "chatgpt", "chat-gpt":
 		return core.ProviderChatGPT
 	case "manual":
