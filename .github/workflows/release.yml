@@ -234,6 +234,9 @@ jobs:
       - build-windows-arm64
       - build-freebsd
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Generate checksums and release notes
         shell: bash
         run: |
