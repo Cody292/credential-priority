@@ -40,14 +40,17 @@ type Trigger string
 const (
 	// TriggerManual 表示管理端手动调用 Run。
 	TriggerManual Trigger = "manual"
+	// TriggerManualApply 表示管理端手动调用并要求写回排序结果。
+	TriggerManualApply Trigger = "manual_apply"
 	// TriggerAutoApply 表示 ticker 或宿主自动应用触发。
 	TriggerAutoApply Trigger = "auto_apply"
 )
 
 // TaskRequest 是 runtime 交给后续任务实现的已解析输入。
 type TaskRequest struct {
-	Config  config.Config
-	Trigger Trigger
+	Config      config.Config
+	Trigger     Trigger
+	AuthIndexes []string
 }
 
 // TaskRunner 执行一轮 credential-priority 任务。
@@ -59,6 +62,12 @@ type Options struct {
 	Runner        TaskRunner
 	Host          host.HostCallbacks
 	Clock         Clock
+	Sleeper       Sleeper
+}
+
+// Sleeper 提供自动重试等待点，测试可注入以避免真实 10s sleep。
+type Sleeper interface {
+	Sleep(ctx context.Context, duration time.Duration) error
 }
 
 // RegisterRequest 是 plugin.register 的 JSON 请求形态。
@@ -80,18 +89,9 @@ type RegisterResult struct {
 
 // Metadata 描述插件在 CPA 管理端展示的非敏感信息。
 type Metadata struct {
-	Name             string        `json:"Name"`
-	Version          string        `json:"Version"`
-	Author           string        `json:"Author"`
-	GitHubRepository string        `json:"GitHubRepository"`
-	Description      string        `json:"Description"`
-	ConfigFields     []ConfigField `json:"ConfigFields"`
-}
-
-// ConfigField 描述 CPA 管理端可渲染的插件自有配置字段。
-type ConfigField struct {
-	Name        string   `json:"Name"`
-	Type        string   `json:"Type"`
-	Description string   `json:"Description"`
-	EnumValues  []string `json:"EnumValues,omitempty"`
+	Name             string `json:"Name"`
+	Version          string `json:"Version"`
+	Author           string `json:"Author"`
+	GitHubRepository string `json:"GitHubRepository"`
+	Description      string `json:"Description"`
 }
