@@ -31,9 +31,15 @@ typedef struct cliproxy_plugin_api {
 	cliproxy_plugin_shutdown_fn shutdown;
 } cliproxy_plugin_api;
 
-extern int credentialPriorityPluginCall(char* method, uint8_t* request, size_t request_len, cliproxy_buffer* response);
-extern void credentialPriorityPluginFreeBuffer(void* ptr, size_t len);
-extern void credentialPriorityPluginShutdown(void);
+#ifdef _WIN32
+#define CPA_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define CPA_PLUGIN_EXPORT
+#endif
+
+extern CPA_PLUGIN_EXPORT int credentialPriorityPluginCall(char* method, uint8_t* request, size_t request_len, cliproxy_buffer* response);
+extern CPA_PLUGIN_EXPORT void credentialPriorityPluginFreeBuffer(void* ptr, size_t len);
+extern CPA_PLUGIN_EXPORT void credentialPriorityPluginShutdown(void);
 
 static inline void set_credential_priority_plugin_api(cliproxy_plugin_api* plugin) {
 	plugin->abi_version = 1;
