@@ -106,10 +106,12 @@ jobs:
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
+        timeout-minutes: 15
         with:
           msystem: ${{ matrix.msystem }}
           path-type: inherit
-          update: true
+          update: false
+          cache: false
           pacboy: toolchain:p
 
       - name: Build package
