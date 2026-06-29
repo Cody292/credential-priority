@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "credential-priority",
+      "name": "Credential Priority",
+      "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
+      "author": "Cody292",
+      "version": "1.0.0",
+      "repository": "https://github.com/Cody292/credential-priority",
+      "tags": ["credential", "management"]
+    }
+  ]
+}
