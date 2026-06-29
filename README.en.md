@@ -1,17 +1,20 @@
+<div align="center">
+
 # credential-priority
+
+[中文](./README.md) | [English](./README.en.md)
+
+</div>
 
 Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts credential priority. The plugin ID, dynamic library basename, and CPA configuration key are all `credential-priority`.
 
 ## Navigation
 
-- [Chinese README](./README.md)
 - [Overview](#overview)
 - [Workflow](#workflow)
 - [Build and Installation](#build-and-installation)
 - [Configuration](#configuration)
 - [Management Page and API](#management-page-and-api)
-- [Plugin Store Publishing Format](#plugin-store-publishing-format)
-- [Security Rules](#security-rules)
 
 ## Overview
 
@@ -24,16 +27,17 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 ## Workflow
 
 ```mermaid
-flowchart TD
-    A[CPA loads the credential-priority dynamic library] --> B[Read plugins.configs.credential-priority]
-    B --> C[List Antigravity and Codex credentials]
-    C --> D[Filter providers by provider_scope]
-    D --> E[Probe Antigravity model-group quota or Codex usage windows]
-    E --> F[Build a plan with provider-independent priority_rules]
-    F --> G{auto_apply or manual apply}
-    G -->|yes| H[Write priority and disabled state through host.auth.save]
-    G -->|no| I[Update status, diagnostics, and snapshot only]
-    H --> J[Show redacted results on the status page]
+%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 28}} }%%
+flowchart LR
+    A[Load plugin] --> B[Read config]
+    B --> C[List credentials]
+    C --> D[Filter providers]
+    D --> E[Probe quota]
+    E --> F[Build plan]
+    F --> G{apply?}
+    G -->|yes| H[Write result]
+    G -->|no| I[Update status]
+    H --> J[Show redacted result]
     I --> J
 ```
 
@@ -112,13 +116,13 @@ plugins:
 
 ### Provider-Independent Rules
 
-Antigravity rules affect only Antigravity credentials:
+Antigravity rules
 
 - `priority_rules.antigravity.start_priority`: start priority for available credentials. Default: `100`.
 - Only credentials with fresh quota evidence for the selected Antigravity model group are sorted.
 - Failed quota fetches and unavailable remaining quota keep the current priority and enabled state.
 
-Codex rules affect only Codex credentials:
+Codex rules
 
 - `priority_rules.codex.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.codex.free_depleted_priority`: priority for depleted Free credentials. Default: `-1`.
@@ -148,62 +152,3 @@ The following endpoints require the CPA management key:
   Exports redacted diagnostics.
 - `GET /v0/management/plugins/credential-priority/snapshot/latest`
   Returns the latest redacted decision snapshot.
-
-## Plugin Store Publishing Format
-
-The plugin store registry declares installable artifacts. This repository publishes `v1.0.0` and provides `registry.json` at the repository root as a third-party store source example.
-
-Registry example:
-
-```json
-{
-  "schema_version": 2,
-  "plugins": [
-    {
-      "id": "credential-priority",
-      "name": "Credential Priority",
-      "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
-      "author": "Cody292",
-      "version": "1.0.0",
-      "install": {
-        "type": "direct",
-        "artifacts": [
-          {
-            "goos": "linux",
-            "goarch": "amd64",
-            "url": "https://github.com/Cody292/credential-priority/releases/download/v1.0.0/credential-priority_1.0.0_linux_amd64.zip",
-            "sha256": "b0a4c1f4a53d93e3c8474136ab4593c486a456a99f851bf475175f76a2be2320",
-            "size": 5442942
-          }
-        ]
-      },
-      "repository": "https://github.com/Cody292/credential-priority",
-      "tags": ["credential", "management"]
-    }
-  ]
-}
-```
-
-The `install.artifacts` entry in `registry.json` must match the `v1.0.0` release assets:
-
-- `credential-priority_1.0.0_<goos>_<goarch>.zip`
-- `checksums.txt`
-
-The zip root must directly contain the dynamic library, for example on Linux:
-
-```text
-credential-priority.so
-```
-
-`checksums.txt` uses the standard sha256 format:
-
-```text
-<sha256>  credential-priority_1.0.0_linux_amd64.zip
-```
-
-## Security Rules
-
-- Never print secrets, tokens, Authorization headers, or raw credential JSON in logs, status pages, diagnostics, or snapshots.
-- Plugin HTTP requests should use `host.http.*` to preserve CPA proxy, logging, and transport behavior.
-- Credential reads and writes must go through `host.auth.*` callbacks instead of duplicating CPA credential file management.
-- The public release repository must not contain local planning documents, management keys, caches, build artifacts, tests, or test data.

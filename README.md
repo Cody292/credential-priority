@@ -1,17 +1,20 @@
+<div align="center">
+
 # credential-priority
+
+[中文](./README.md) | [English](./README.en.md)
+
+</div>
 
 CLIProxyAPI（CPA）凭证优先级自动调整插件。插件 ID、动态库 basename 与 CPA 配置键均为 `credential-priority`。
 
 ## 导航
 
-- [英文 README](./README.en.md)
 - [功能概览](#功能概览)
 - [工作流程](#工作流程)
 - [构建与安装](#构建与安装)
 - [配置说明](#配置说明)
 - [管理页面与接口](#管理页面与接口)
-- [插件商店发布格式](#插件商店发布格式)
-- [安全约束](#安全约束)
 
 ## 功能概览
 
@@ -24,16 +27,17 @@ CLIProxyAPI（CPA）凭证优先级自动调整插件。插件 ID、动态库 ba
 ## 工作流程
 
 ```mermaid
-flowchart TD
-    A[CPA 加载 credential-priority 动态库] --> B[读取 plugins.configs.credential-priority]
-    B --> C[列出 Antigravity 与 Codex 凭证]
-    C --> D[按 provider_scope 过滤提供商]
-    D --> E[按 Antigravity 模型组或 Codex 用量窗口探测额度]
-    E --> F[按提供商独立 priority_rules 生成排序计划]
-    F --> G{auto_apply 或手动 apply}
-    G -->|是| H[通过 host.auth.save 写回优先级与禁用状态]
-    G -->|否| I[仅更新状态页、诊断与快照]
-    H --> J[状态页展示脱敏结果]
+%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 28}} }%%
+flowchart LR
+    A[加载插件] --> B[读取配置]
+    B --> C[列出凭证]
+    C --> D[过滤提供商]
+    D --> E[探测额度]
+    E --> F[生成排序计划]
+    F --> G{写入？}
+    G -->|是| H[写回结果]
+    G -->|否| I[更新状态]
+    H --> J[展示脱敏结果]
     I --> J
 ```
 
@@ -114,13 +118,13 @@ plugins:
 
 ### 提供商独立排序规则
 
-Antigravity 规则只影响 Antigravity 凭证：
+Antigravity规则
 
 - `priority_rules.antigravity.start_priority`：可用凭证的起始优先级，默认 `100`。
 - 只排序本轮成功获取到所选模型组配额的 Antigravity 凭证。
 - 配额获取失败或剩余额度不可用时保留当前优先级与启用状态。
 
-Codex 规则只影响 Codex 凭证：
+Codex规则
 
 - `priority_rules.codex.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
@@ -150,62 +154,3 @@ Codex 规则只影响 Codex 凭证：
   导出脱敏诊断信息。
 - `GET /v0/management/plugins/credential-priority/snapshot/latest`
   获取最近一次运行的脱敏决策快照。
-
-## 插件商店发布格式
-
-插件商店 registry 需要声明安装资产。本仓库发布版本为 `v1.0.0`，并在根目录提供 `registry.json` 作为第三方商店来源示例。
-
-registry 示例：
-
-```json
-{
-  "schema_version": 2,
-  "plugins": [
-    {
-      "id": "credential-priority",
-      "name": "Credential Priority",
-      "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
-      "author": "Cody292",
-      "version": "1.0.0",
-      "install": {
-        "type": "direct",
-        "artifacts": [
-          {
-            "goos": "linux",
-            "goarch": "amd64",
-            "url": "https://github.com/Cody292/credential-priority/releases/download/v1.0.0/credential-priority_1.0.0_linux_amd64.zip",
-            "sha256": "b0a4c1f4a53d93e3c8474136ab4593c486a456a99f851bf475175f76a2be2320",
-            "size": 5442942
-          }
-        ]
-      },
-      "repository": "https://github.com/Cody292/credential-priority",
-      "tags": ["credential", "management"]
-    }
-  ]
-}
-```
-
-`registry.json` 中的 `install.artifacts` 必须与 `v1.0.0` Release 资产一致：
-
-- `credential-priority_1.0.0_<goos>_<goarch>.zip`
-- `checksums.txt`
-
-zip 根目录必须直接包含动态库，例如 Linux：
-
-```text
-credential-priority.so
-```
-
-`checksums.txt` 使用 sha256 标准格式：
-
-```text
-<sha256>  credential-priority_1.0.0_linux_amd64.zip
-```
-
-## 安全约束
-
-- 不要在日志、状态页、诊断或快照中输出密钥、Token、Authorization 头或原始凭证 JSON。
-- 插件自己的 HTTP 请求优先走 `host.http.*`，避免绕过宿主代理、日志和传输策略。
-- 凭证读取与写入必须通过 `host.auth.*` 回调完成，避免复制宿主凭证文件管理逻辑。
-- 当前公开发布仓库不应包含本地规划文档、管理密钥、缓存、构建产物、测试文件或测试数据。
