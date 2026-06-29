@@ -16,11 +16,13 @@ permissions:
 
 env:
   PLUGIN_NAME: credential-priority
+  INPUT_TAG: ${{ inputs.tag }}
 
 jobs:
   build-posix:
     name: Build ${{ matrix.goos }}_${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
     permissions:
       contents: write
     strategy:
@@ -58,7 +60,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            version="${{ inputs.tag }}"
+            version="${INPUT_TAG}"
             version="${version#v}"
           fi
 
@@ -77,17 +79,25 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+            tag="${INPUT_TAG}"
           fi
-          case "$tag" in
-            v*) ;;
-            *) echo "release tag must start with v" >&2; exit 1 ;;
-          esac
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
           gh release upload "${tag}" dist/*.zip --clobber
 
   build-windows:
     name: Build windows_amd64
     runs-on: windows-latest
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
     permissions:
       contents: write
     steps:
@@ -129,7 +139,7 @@ jobs:
         run: |
           $version = "${env:GITHUB_REF_NAME}" -replace '^v', ''
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            $version = "${{ inputs.tag }}" -replace '^v', ''
+            $version = "${env:INPUT_TAG}" -replace '^v', ''
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -143,16 +153,23 @@ jobs:
         run: |
           $tag = "${env:GITHUB_REF_NAME}"
           if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            $tag = "${{ inputs.tag }}"
+            $tag = "${env:INPUT_TAG}"
           }
-          if (-not $tag.StartsWith("v")) {
-            throw "release tag must start with v"
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$') {
+            throw "release tag must be semantic version like v1.0.0"
+          }
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          $tagSha = (git rev-parse "${tag}^{commit}").Trim()
+          $headSha = (git rev-parse HEAD).Trim()
+          if ($tagSha -ne $headSha) {
+            throw "release tag must point to current workflow commit"
           }
           gh release upload $tag dist/*.zip --clobber
 
   build-windows-arm64:
     name: Build windows_arm64
     runs-on: ubuntu-latest
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
     permissions:
       contents: write
     steps:
@@ -176,7 +193,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            version="${{ inputs.tag }}"
+            version="${INPUT_TAG}"
             version="${version#v}"
           fi
 
@@ -197,17 +214,25 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+            tag="${INPUT_TAG}"
           fi
-          case "$tag" in
-            v*) ;;
-            *) echo "release tag must start with v" >&2; exit 1 ;;
-          esac
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
           gh release upload "${tag}" dist/*.zip --clobber
 
   build-freebsd:
     name: Build freebsd_amd64
     runs-on: ubuntu-latest
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
     permissions:
       contents: write
     steps:
@@ -247,17 +272,25 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+            tag="${INPUT_TAG}"
           fi
-          case "$tag" in
-            v*) ;;
-            *) echo "release tag must start with v" >&2; exit 1 ;;
-          esac
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
           gh release upload "${tag}" dist/*.zip --clobber
 
   publish-release:
     name: Publish checksums and notes
     runs-on: ubuntu-latest
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
     permissions:
       contents: write
     needs:
@@ -278,13 +311,20 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+            tag="${INPUT_TAG}"
             version="${tag#v}"
           fi
-          case "$tag" in
-            v*) ;;
-            *) echo "release tag must start with v" >&2; exit 1 ;;
-          esac
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
 
           mkdir -p dist
           gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
