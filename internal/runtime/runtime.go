@@ -24,6 +24,7 @@ type Runtime struct {
 	cfg           config.Config
 	hostCallbacks host.HostCallbacks
 	clock         Clock
+	sleeper       Sleeper
 	management    *management.Handler
 	latestResult  apply.Result
 	latestAudit   string
@@ -42,8 +43,12 @@ func New(options Options) *Runtime {
 	if clock == nil {
 		clock = realRuntimeClock{}
 	}
+	sleeper := options.Sleeper
+	if sleeper == nil {
+		sleeper = realSleeper{}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	runtime := &Runtime{tickerFactory: factory, rootCtx: ctx, cancel: cancel, cfg: config.Default(), hostCallbacks: options.Host, clock: clock}
+	runtime := &Runtime{tickerFactory: factory, rootCtx: ctx, cancel: cancel, cfg: config.Default(), hostCallbacks: options.Host, clock: clock, sleeper: sleeper}
 	if runner != nil {
 		runtime.runner = runner
 	} else {
@@ -100,6 +105,19 @@ func (realRuntimeClock) Now() time.Time {
 	return time.Now().UTC()
 }
 
+type realSleeper struct{}
+
+func (realSleeper) Sleep(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // Register 解析首次配置，启动 ticker，并返回真实能力声明。
 func (r *Runtime) Register(ctx context.Context, request RegisterRequest) (RegisterResult, error) {
 	cfg, err := config.LoadBytes([]byte(request.ConfigYAML))
@@ -121,27 +139,8 @@ func registrationResult() RegisterResult {
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
-			ConfigFields:     registerConfigFields(),
 		},
 		Capabilities: map[string]bool{"management_api": true},
-	}
-}
-
-func registerConfigFields() []ConfigField {
-	return []ConfigField{
-		{Name: "enabled", Type: "boolean", Description: "Enable credential priority management."},
-		{Name: "auto_apply", Type: "boolean", Description: "Automatically apply priority updates on the configured interval."},
-		{Name: "interval", Type: "string", Description: "Automatic run interval, for example 5m."},
-		{Name: "max_concurrency", Type: "integer", Description: "Maximum concurrent provider probes."},
-		{Name: "min_change", Type: "integer", Description: "Minimum priority delta required before writing changes."},
-		{Name: "top_priority_probe_count", Type: "integer", Description: "Number of top-priority credentials to probe."},
-		{Name: "active_group_size", Type: "integer", Description: "Credential count in the active priority group."},
-		{Name: "active_group_jitter", Type: "string", Description: "Priority jitter duration for active credentials."},
-		{Name: "disabled_group_size", Type: "integer", Description: "Credential count in the disabled probe group."},
-		{Name: "disabled_probe_interval", Type: "string", Description: "Minimum duration before probing disabled credentials again."},
-		{Name: "cache_ttl", Type: "string", Description: "Fresh probe cache lifetime."},
-		{Name: "cache_path", Type: "string", Description: "Path to the refresh cache JSON file."},
-		{Name: "provider_overrides", Type: "object", Description: "Optional per-provider overrides."},
 	}
 }
 
@@ -159,12 +158,52 @@ func (r *Runtime) Reconfigure(ctx context.Context, request ReconfigureRequest) (
 
 // Run 执行一轮手动任务；若已有任务运行则返回 ErrRunInProgress。
 func (r *Runtime) Run(ctx context.Context) error {
-	return r.run(ctx, TriggerManual)
+	return r.run(ctx, TriggerManual, "", nil, "", nil)
+}
+
+// RunWithProviders 执行限定 provider 的一轮手动任务。
+func (r *Runtime) RunWithProviders(ctx context.Context, providers []string) error {
+	return r.RunWithProviderScope(ctx, config.ProviderScopeSelected, providers)
+}
+
+// RunWithProviderScope 执行限定或全部 provider 的一轮手动任务。
+func (r *Runtime) RunWithProviderScope(ctx context.Context, scope config.ProviderScope, providers []string) error {
+	return r.run(ctx, TriggerManual, scope, providers, "", nil)
 }
 
 // AutoApply 执行一轮自动任务；若已有任务运行则返回 ErrRunInProgress。
 func (r *Runtime) AutoApply(ctx context.Context) error {
-	return r.run(ctx, TriggerAutoApply)
+	return r.run(ctx, TriggerAutoApply, "", nil, "", nil)
+}
+
+// AutoApplyWithProviders 执行限定 provider 的一轮自动写入任务。
+func (r *Runtime) AutoApplyWithProviders(ctx context.Context, providers []string) error {
+	return r.AutoApplyWithProviderScope(ctx, config.ProviderScopeSelected, providers)
+}
+
+// AutoApplyWithProviderScope 执行限定或全部 provider 的一轮自动写入任务。
+func (r *Runtime) AutoApplyWithProviderScope(ctx context.Context, scope config.ProviderScope, providers []string) error {
+	return r.run(ctx, TriggerAutoApply, scope, providers, "", nil)
+}
+
+// ManualApplyWithProviderScope 执行管理页手动触发的写入任务。
+func (r *Runtime) ManualApplyWithProviderScope(ctx context.Context, scope config.ProviderScope, providers []string) error {
+	return r.run(ctx, TriggerManualApply, scope, providers, "", nil)
+}
+
+// ManualApplyWithProviderScopeAndModelGroup 执行管理页手动触发的指定 Antigravity 模型组写入任务。
+func (r *Runtime) ManualApplyWithProviderScopeAndModelGroup(ctx context.Context, scope config.ProviderScope, providers []string, modelGroup config.AntigravityModelGroup) error {
+	return r.run(ctx, TriggerManualApply, scope, providers, modelGroup, nil)
+}
+
+// ManualApplyWithProviderScopeModelGroupAndAuthIndexes 执行管理页单凭证重试写入任务。
+func (r *Runtime) ManualApplyWithProviderScopeModelGroupAndAuthIndexes(ctx context.Context, scope config.ProviderScope, providers []string, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
+	return r.run(ctx, TriggerManualApply, scope, providers, modelGroup, authIndexes)
+}
+
+// RunWithProviderScopeAndModelGroup 执行管理页手动触发的指定 Antigravity 模型组 dry-run 任务。
+func (r *Runtime) RunWithProviderScopeAndModelGroup(ctx context.Context, scope config.ProviderScope, providers []string, modelGroup config.AntigravityModelGroup) error {
+	return r.run(ctx, TriggerManual, scope, providers, modelGroup, nil)
 }
 
 // Shutdown 停止 ticker、取消 runtime context，并等待内部 worker 退出。
@@ -219,7 +258,7 @@ func (r *Runtime) newWorker(cfg config.Config) *tickerWorker {
 	return &tickerWorker{ticker: r.tickerFactory.NewTicker(cfg.Interval), done: make(chan struct{})}
 }
 
-func (r *Runtime) run(ctx context.Context, trigger Trigger) error {
+func (r *Runtime) run(ctx context.Context, trigger Trigger, scope config.ProviderScope, providers []string, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
 	if !r.runMu.TryLock() {
 		return ErrRunInProgress
 	}
@@ -229,7 +268,17 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger) error {
 		return err
 	}
 	defer cleanup()
-	if err := runner(taskCtx, TaskRequest{Config: cfg, Trigger: trigger}); err != nil && !errors.Is(err, context.Canceled) {
+	if scope == config.ProviderScopeAll {
+		cfg.ProviderScope = config.ProviderScopeAll
+		cfg.SelectedProviders = nil
+	} else if len(providers) > 0 {
+		cfg.ProviderScope = config.ProviderScopeSelected
+		cfg.SelectedProviders = append([]string(nil), providers...)
+	}
+	if modelGroup != "" {
+		cfg.AntigravityModelGroup = modelGroup
+	}
+	if err := runner(taskCtx, TaskRequest{Config: cfg, Trigger: trigger, AuthIndexes: append([]string(nil), authIndexes...)}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run %s: %w", trigger, err)
 	}
 	return nil

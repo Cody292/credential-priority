@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"credential-priority/internal/apply"
@@ -11,13 +12,16 @@ import (
 	"credential-priority/internal/core"
 	"credential-priority/internal/host"
 	"credential-priority/internal/priority"
-	"credential-priority/internal/provider"
-	"credential-priority/internal/provider/codex"
 	"credential-priority/internal/schedule"
 	"credential-priority/internal/state"
 )
 
 var errMissingHostCallbacks = errors.New("runtime: host callbacks are required")
+
+const (
+	autoQuotaProbeAttempts = 3
+	autoQuotaProbeDelay    = 10 * time.Second
+)
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
 	if r.hostCallbacks == nil {
@@ -30,15 +34,21 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	credentials, accountIDs := credentialsFromAuthFiles(files)
+	credentials = filterCredentialsByProvider(credentials, request.Config)
+	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	credentials, authMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, credentials)
+	if err != nil {
+		return err
+	}
 	store, err := state.Load(ctx, request.Config.CachePath)
 	if err != nil {
 		return err
 	}
-	probePlan, err := schedule.PlanProbeSchedule(credentials, scheduleOptions(request.Config, now))
+	probes, err := probesForRequest(credentials, scheduleOptions(request.Config, now), request.AuthIndexes)
 	if err != nil {
 		return err
 	}
-	evidence, err := collectFreshEvidence(ctx, collectInput{client: client, store: store, probes: probePlan.Immediate, accountIDs: accountIDs, now: now, cacheTTL: request.Config.CacheTTL})
+	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials, now: now, cacheTTL: request.Config.CacheTTL, forceProbe: request.Trigger == TriggerManualApply, antigravityModelGroup: request.Config.AntigravityModelGroup}, request.Trigger)
 	if err != nil {
 		return err
 	}
@@ -46,12 +56,26 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, now))
-	if request.Trigger != TriggerAutoApply {
+	if request.Trigger == TriggerManual {
 		result := apply.Result{Snapshot: apply.Snapshot(plan)}
 		r.snapshotRun(result, "dry-run plan generated")
 		return nil
 	}
-	result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan})
+	if request.Trigger == TriggerManualApply {
+		failures := manualProbeFailures(plan, evidence)
+		result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
+		if err != nil {
+			return err
+		}
+		if len(failures) > 0 {
+			appendManualProbeFailures(&result, failures)
+			r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
+			return nil
+		}
+		r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
+		return nil
+	}
+	result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
 	if err != nil {
 		return err
 	}
@@ -59,57 +83,179 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	return nil
 }
 
-type collectInput struct {
-	client     *host.Client
-	store      *state.Store
-	probes     []schedule.Probe
-	accountIDs map[string]string
-	now        time.Time
-	cacheTTL   time.Duration
-}
-
-func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.ProbeEvidence, error) {
-	registry := provider.NewRegistry()
-	prober := codex.NewProber(input.client, fixedClock{now: input.now})
-	evidence := make([]priority.ProbeEvidence, 0, len(input.probes))
-	for _, probe := range input.probes {
-		registryResult := registry.Evaluate(probe.Credential)
-		if registryResult.StrategyName != core.StrategyCodex && registryResult.StrategyName != core.StrategyChatGPT {
-			continue
-		}
-		needsProbe, err := input.store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: registryResult.Provider, Now: input.now, Policy: probePolicy(input.cacheTTL)})
+func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) ([]priority.ProbeEvidence, error) {
+	if trigger != TriggerAutoApply {
+		return collectFreshEvidence(ctx, input)
+	}
+	var evidence []priority.ProbeEvidence
+	for attempt := 1; attempt <= autoQuotaProbeAttempts; attempt++ {
+		current, err := collectFreshEvidence(ctx, input)
 		if err != nil {
 			return nil, err
 		}
-		if !needsProbe {
-			continue
+		evidence = current
+		if !hasProbeFailure(current) || attempt == autoQuotaProbeAttempts {
+			return evidence, nil
 		}
-		result := prober.Probe(ctx, codex.ProbeRequest{Provider: registryResult.Provider, AuthIndex: probe.Credential.AuthIndex, AccountID: input.accountIDs[probe.Credential.AuthIndex]})
-		item, err := recordProbeResult(ctx, input.store, result, input.now)
-		if err != nil {
+		input.forceProbe = true
+		if err := r.sleeper.Sleep(ctx, autoQuotaProbeDelay); err != nil {
 			return nil, err
-		}
-		if item.Status != priority.EvidenceStatusUnknown {
-			evidence = append(evidence, item)
 		}
 	}
 	return evidence, nil
 }
 
-func recordProbeResult(ctx context.Context, store *state.Store, result codex.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
-	if result.Status != codex.StatusReady || result.ResetAt == nil || result.Remaining == nil {
-		err := store.MarkProbeFailure(ctx, state.ProbeFailure{AuthIndex: result.AuthIndex, Provider: result.Provider, ObservedAt: now, Err: errors.New(result.Error), NextProbeAt: now.Add(time.Hour)})
-		return priority.ProbeEvidence{Provider: result.Provider, AuthIndex: result.AuthIndex, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusProbeFailed}, err
+func hasProbeFailure(evidence []priority.ProbeEvidence) bool {
+	return slices.ContainsFunc(evidence, func(item priority.ProbeEvidence) bool {
+		return item.Status == priority.EvidenceStatusProbeFailed
+	})
+}
+
+func manualProbeFailures(plan priority.Plan, evidence []priority.ProbeEvidence) []apply.ChangeResult {
+	failures := make(map[string]priority.ProbeEvidence)
+	for _, item := range evidence {
+		if item.Status == priority.EvidenceStatusProbeFailed {
+			failures[item.AuthIndex] = item
+		}
 	}
-	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{AuthIndex: result.AuthIndex, Provider: result.Provider, ObservedAt: result.ObservedAt, ResetAt: *result.ResetAt, Remaining: int(*result.Remaining), Source: state.SourceFreshProbe, NextProbeAt: result.ObservedAt.Add(time.Hour)})
-	return priority.ProbeEvidence{Provider: result.Provider, AuthIndex: result.AuthIndex, ObservedAt: result.ObservedAt, ResetAt: result.ResetAt, Remaining: result.Remaining, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusReady, PlanType: result.PlanType, EvidenceFresh: true}, err
+	if len(failures) == 0 {
+		return nil
+	}
+	results := make([]apply.ChangeResult, 0, len(failures))
+	for _, item := range plan.Items {
+		failure, ok := failures[item.Credential.AuthIndex]
+		if !ok {
+			continue
+		}
+		failedItem := item
+		failedItem.Credential.Provider = failure.Provider
+		failedItem.Reason = "failedQuotaFetch"
+		change := apply.FailureResult(failedItem, fmt.Errorf("failedQuotaFetch"))
+		results = append(results, change)
+	}
+	return results
+}
+
+func appendManualProbeFailures(result *apply.Result, failures []apply.ChangeResult) {
+	for _, failure := range failures {
+		replaceOrAppendManualProbeFailure(result, failure)
+	}
+}
+
+func replaceOrAppendManualProbeFailure(result *apply.Result, failure apply.ChangeResult) {
+	key := manualProbeFailureKey(failure)
+	for index := 0; index < len(result.Changes); index++ {
+		if manualProbeFailureKey(result.Changes[index]) != key {
+			continue
+		}
+		decrementResultCounter(result, result.Changes[index])
+		result.Changes = append(result.Changes[:index], result.Changes[index+1:]...)
+		index--
+	}
+	result.Changes = append(result.Changes, failure)
+	result.Attempted++
+	result.Failed++
+}
+
+func manualProbeFailureKey(change apply.ChangeResult) string {
+	if change.RetryAuthIndex != "" {
+		return change.RetryAuthIndex
+	}
+	return change.AuthIndex
+}
+
+func decrementResultCounter(result *apply.Result, change apply.ChangeResult) {
+	switch change.Status {
+	case apply.ChangeStatusSuccess:
+		result.Attempted--
+		result.Succeeded--
+	case apply.ChangeStatusFailed:
+		result.Attempted--
+		result.Failed--
+	case apply.ChangeStatusSkipped:
+		result.Skipped--
+	}
+}
+
+func probesForRequest(credentials []core.Credential, options schedule.Options, authIndexes []string) ([]schedule.Probe, error) {
+	if len(authIndexes) == 0 {
+		probePlan, err := schedule.PlanProbeSchedule(credentials, options)
+		if err != nil {
+			return nil, err
+		}
+		return probePlan.Immediate, nil
+	}
+	return probesAtCurrentTime(credentials, options.Clock.Now()), nil
+}
+
+func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {
+	if len(authIndexes) == 0 {
+		return credentials
+	}
+	allowed := make(map[string]struct{}, len(authIndexes))
+	for _, authIndex := range authIndexes {
+		allowed[authIndex] = struct{}{}
+	}
+	filtered := make([]core.Credential, 0, len(credentials))
+	for _, credential := range credentials {
+		if _, ok := allowed[credential.AuthIndex]; ok {
+			filtered = append(filtered, credential)
+		}
+	}
+	return filtered
+}
+
+func probesAtCurrentTime(credentials []core.Credential, now time.Time) []schedule.Probe {
+	probes := make([]schedule.Probe, len(credentials))
+	for index, credential := range credentials {
+		probes[index] = schedule.Probe{Credential: credential, NextProbeAt: now}
+	}
+	return probes
+}
+
+func filterCredentialsByProvider(credentials []core.Credential, cfg config.Config) []core.Credential {
+	if cfg.ProviderScope != config.ProviderScopeSelected || len(cfg.SelectedProviders) == 0 {
+		filtered := make([]core.Credential, 0, len(credentials))
+		for _, credential := range credentials {
+			p := filterProvider(credential)
+			if p == core.ProviderAntigravity || p == core.ProviderCodex {
+				filtered = append(filtered, credential)
+			}
+		}
+		return filtered
+	}
+	selected := make(map[core.Provider]struct{}, len(cfg.SelectedProviders))
+	for _, provider := range cfg.SelectedProviders {
+		selected[core.Provider(provider)] = struct{}{}
+	}
+	filtered := make([]core.Credential, 0, len(credentials))
+	for _, credential := range credentials {
+		if _, ok := selected[filterProvider(credential)]; ok {
+			filtered = append(filtered, credential)
+		}
+	}
+	return filtered
+}
+
+func filterProvider(credential core.Credential) core.Provider {
+	if credential.Provider != "" {
+		return credential.Provider
+	}
+	switch credential.Type {
+	case core.CredentialTypeCodex:
+		return core.ProviderCodex
+	case core.CredentialTypeAntigravity:
+		return core.ProviderAntigravity
+	default:
+		return core.ProviderUnknown
+	}
 }
 
 func credentialsFromAuthFiles(files []host.AuthFile) ([]core.Credential, map[string]string) {
 	credentials := make([]core.Credential, len(files))
 	accountIDs := make(map[string]string, len(files))
 	for index, file := range files {
-		credentials[index] = core.Credential{Name: file.Name, AuthIndex: file.AuthIndex, Provider: core.Provider(file.Provider), Type: core.CredentialType(file.Type), Status: core.CredentialStatus(file.Status), Disabled: file.Disabled, Unavailable: file.Unavailable, Priority: file.Priority, Email: file.Email, PlanType: core.PlanType(file.IDToken.PlanType)}
+		credentials[index] = core.Credential{Name: file.Name, AuthIndex: file.AuthIndex, Provider: core.Provider(file.Provider), Type: core.CredentialType(file.Type), Status: core.CredentialStatus(file.Status), Disabled: file.Disabled, Unavailable: file.Unavailable, Priority: file.Priority, PriorityMissing: file.PriorityMissing, Account: file.Account, Email: file.Email, PlanType: core.PlanType(file.IDToken.PlanType), RawJSON: append([]byte(nil), file.RawJSON...)}
 		accountIDs[file.AuthIndex] = file.IDToken.ChatGPTAccountID
 	}
 	return credentials, accountIDs
@@ -120,7 +266,20 @@ func scheduleOptions(cfg config.Config, now time.Time) schedule.Options {
 }
 
 func priorityOptions(cfg config.Config, now time.Time) priority.Options {
-	return priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 2 * time.Hour, ResetBoost: 50}
+	options := priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 2 * time.Hour, ResetBoost: 50}
+	if cfg.PriorityRules.Enabled {
+		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
+		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled
+		paidDepletedKeepsEnabled := cfg.PriorityRules.Codex.PaidDepletedKeepsEnabled
+		options.StartPriorityByProvider = map[core.Provider]int{
+			core.ProviderAntigravity: cfg.PriorityRules.Antigravity.StartPriority,
+			core.ProviderCodex:       cfg.PriorityRules.Codex.StartPriority,
+		}
+		options.CodexFreeDepletedPriority = &freeDepletedPriority
+		options.CodexFreeDepletedDisabled = &freeDepletedDisabled
+		options.CodexPaidDepletedKeepsEnabled = &paidDepletedKeepsEnabled
+	}
+	return options
 }
 
 func probePolicy(cacheTTL time.Duration) state.ProbePolicy {

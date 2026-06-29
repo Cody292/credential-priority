@@ -158,6 +158,14 @@ func (hostCallbackAdapter) ListAuthFiles(ctx context.Context) ([]host.AuthFile, 
 	return response.Files, nil
 }
 
+func (hostCallbackAdapter) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
+	var response host.AuthDocument
+	if err := callHost(ctx, "host.auth.get", map[string]string{"auth_index": authIndex}, &response); err != nil {
+		return host.AuthDocument{}, err
+	}
+	return response, nil
+}
+
 func (hostCallbackAdapter) GetRuntime(ctx context.Context, authIndex string) (host.RuntimeAuth, error) {
 	var response host.RuntimeAuth
 	if err := callHost(ctx, "host.auth.get_runtime", map[string]string{"auth_index": authIndex}, &response); err != nil {

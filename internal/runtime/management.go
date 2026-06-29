@@ -214,17 +214,19 @@ func envelopeManagement(result any, err error) []byte {
 	return mustMarshal(Envelope{OK: true, Result: encoded})
 }
 
-func (r managementRunner) Run(ctx context.Context, mode string) (apply.Result, error) {
-	if mode == "apply" {
-		if err := r.runtime.AutoApply(ctx); err != nil {
+func (r managementRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
+	if request.Mode == "apply" {
+		if err := r.runtime.ManualApplyWithProviderScopeModelGroupAndAuthIndexes(ctx, request.Scope, request.Providers, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
 			return apply.Result{}, err
 		}
-		return apply.Result{}, nil
+		result, _ := r.runtime.currentRunSnapshot()
+		return result, nil
 	}
-	if err := r.runtime.Run(ctx); err != nil {
+	if err := r.runtime.RunWithProviderScopeAndModelGroup(ctx, request.Scope, request.Providers, request.AntigravityModelGroup); err != nil {
 		return apply.Result{}, err
 	}
-	return apply.Result{}, nil
+	result, _ := r.runtime.currentRunSnapshot()
+	return result, nil
 }
 
 func (r managementRunner) Status(ctx context.Context) (management.StatusInfo, error) {

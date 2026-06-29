@@ -32,6 +32,7 @@ const (
 type Entry struct {
 	SchemaVersion int           `json:"schema_version"`
 	Provider      core.Provider `json:"provider"`
+	ModelGroup    string        `json:"model_group,omitempty"`
 	AuthIndex     string        `json:"auth_index"`
 	ObservedAt    time.Time     `json:"observed_at"`
 	ResetAt       time.Time     `json:"reset_at"`
@@ -49,16 +50,18 @@ type ProbePolicy struct {
 
 // ProbeCheck 是 NeedsProbe 的输入条件。
 type ProbeCheck struct {
-	AuthIndex string
-	Provider  core.Provider
-	Now       time.Time
-	Policy    ProbePolicy
+	AuthIndex  string
+	Provider   core.Provider
+	ModelGroup string
+	Now        time.Time
+	Policy     ProbePolicy
 }
 
 // ProbeSuccess 是 fresh probe 成功后写入缓存的状态。
 type ProbeSuccess struct {
 	AuthIndex   string
 	Provider    core.Provider
+	ModelGroup  string
 	ObservedAt  time.Time
 	ResetAt     time.Time
 	Remaining   int
@@ -70,6 +73,7 @@ type ProbeSuccess struct {
 type ProbeFailure struct {
 	AuthIndex   string
 	Provider    core.Provider
+	ModelGroup  string
 	ObservedAt  time.Time
 	Err         error
 	NextProbeAt time.Time
@@ -151,7 +155,8 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	entry := Entry{
 		SchemaVersion: SchemaVersion,
 		Provider:      success.Provider,
-		AuthIndex:     entryKey(success.AuthIndex),
+		ModelGroup:    entryModelGroup(success.ModelGroup),
+		AuthIndex:     authIndexKey(success.AuthIndex),
 		ObservedAt:    success.ObservedAt.UTC(),
 		ResetAt:       success.ResetAt.UTC(),
 		Remaining:     success.Remaining,
@@ -161,7 +166,7 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[entry.AuthIndex] = entry
+	s.entries[entryKey(success.AuthIndex, success.ModelGroup)] = entry
 	return nil
 }
 
@@ -170,13 +175,14 @@ func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) erro
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("mark probe failure context: %w", err)
 	}
-	key := entryKey(failure.AuthIndex)
+	key := entryKey(failure.AuthIndex, failure.ModelGroup)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.entries[key]
 	entry.SchemaVersion = SchemaVersion
 	entry.Provider = failure.Provider
-	entry.AuthIndex = key
+	entry.ModelGroup = entryModelGroup(failure.ModelGroup)
+	entry.AuthIndex = authIndexKey(failure.AuthIndex)
 	entry.ObservedAt = failure.ObservedAt.UTC()
 	entry.LastError = sanitizeProbeError(failure.Err)
 	entry.NextProbeAt = failure.NextProbeAt.UTC()
@@ -189,7 +195,7 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("needs probe context: %w", err)
 	}
-	key := entryKey(check.AuthIndex)
+	key := entryKey(check.AuthIndex, check.ModelGroup)
 	s.mu.RLock()
 	entry, ok := s.entries[key]
 	s.mu.RUnlock()
@@ -200,6 +206,9 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 		return true, nil
 	}
 	if entry.Provider != check.Provider {
+		return true, nil
+	}
+	if entry.ModelGroup != entryModelGroup(check.ModelGroup) {
 		return true, nil
 	}
 	if isTTLExpired(entry, check) {
@@ -224,12 +233,25 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 func (s *Store) DiagnosticEntry(authIndex string) (Entry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	entry, ok := s.entries[entryKey(authIndex)]
+	entry, ok := s.entries[entryKey(authIndex, "")]
 	return entry, ok
 }
 
-func entryKey(authIndex string) string {
+func entryKey(authIndex string, modelGroup string) string {
+	authKey := authIndexKey(authIndex)
+	group := entryModelGroup(modelGroup)
+	if group == "" {
+		return authKey
+	}
+	return authKey + "|model_group=" + group
+}
+
+func authIndexKey(authIndex string) string {
 	return strings.TrimSpace(authIndex)
+}
+
+func entryModelGroup(modelGroup string) string {
+	return strings.TrimSpace(modelGroup)
 }
 
 func isTTLExpired(entry Entry, check ProbeCheck) bool {
