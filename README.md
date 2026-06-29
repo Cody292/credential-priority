@@ -6,7 +6,13 @@
 
 </div>
 
-CLIProxyAPI（CPA）凭证优先级自动调整插件。插件 ID、动态库 basename 与 CPA 配置键均为 `credential-priority`。
+CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基础名与 CPA 配置键均为 `credential-priority`。
+
+<div align="center">
+  <img src="./picture/密钥验证页.png" alt="密钥验证页" width="32%" />
+  <img src="./picture/概览页.png" alt="概览页" width="32%" />
+  <img src="./picture/配置页.png" alt="配置页" width="32%" />
+</div>
 
 ## 导航
 
@@ -26,19 +32,18 @@ CLIProxyAPI（CPA）凭证优先级自动调整插件。插件 ID、动态库 ba
 
 ## 工作流程
 
-```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 28}} }%%
-flowchart LR
-    A[加载插件] --> B[读取配置]
-    B --> C[列出凭证]
-    C --> D[过滤提供商]
-    D --> E[探测额度]
-    E --> F[生成排序计划]
-    F --> G{写入？}
-    G -->|是| H[写回结果]
-    G -->|否| I[更新状态]
-    H --> J[展示脱敏结果]
-    I --> J
+```text
+加载插件
+  -> 读取 plugins.configs.credential-priority 配置
+  -> 通过 host.auth.list 获取 CPA 凭证列表
+  -> 按 provider_scope / selected_providers 筛选当前支持的提供商
+       - Antigravity：按所选模型组探测剩余额度
+       - Codex：按账号计划与额度状态探测可用性
+  -> 只使用本轮最新且可用的探测证据生成排序计划
+  -> 根据运行模式决定是否写回
+       - apply：通过 host.auth.save 写回优先级与启用状态
+       - preview：仅更新状态、诊断、快照与日志
+  -> 在管理页面展示脱敏后的统计、审计摘要与排序结果
 ```
 
 ## 构建与安装
@@ -118,13 +123,13 @@ plugins:
 
 ### 提供商独立排序规则
 
-Antigravity规则
+Antigravity 规则
 
 - `priority_rules.antigravity.start_priority`：可用凭证的起始优先级，默认 `100`。
 - 只排序本轮成功获取到所选模型组配额的 Antigravity 凭证。
 - 配额获取失败或剩余额度不可用时保留当前优先级与启用状态。
 
-Codex规则
+Codex 规则
 
 - `priority_rules.codex.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
