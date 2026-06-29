@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"credential-priority/internal/apply"
+	"credential-priority/internal/config"
 	"credential-priority/internal/host"
 )
 
@@ -25,10 +26,19 @@ type StatusInfo struct {
 // Runner 定义了管理 API 处理程序所需的 runtime 服务契约。
 // 用于与 runtime 层解耦，防止循环导入。
 type Runner interface {
-	Run(ctx context.Context, mode string) (apply.Result, error)
+	Run(ctx context.Context, request RunRequest) (apply.Result, error)
 	Status(ctx context.Context) (StatusInfo, error)
 	LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
+}
+
+// RunRequest 是资源页触发手动排序时的已解析请求。
+type RunRequest struct {
+	Mode                  string
+	Scope                 config.ProviderScope
+	Providers             []string
+	AntigravityModelGroup config.AntigravityModelGroup
+	AuthIndexes           []string
 }
 
 // Handler 实现了 http.Handler 用于提供管理接口与 HTML 状态页面。
@@ -98,7 +108,23 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.release()
 
-	result, err := h.runner.Run(r.Context(), mode)
+	providerScope, err := parseRunProviderScope(r)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	providers, err := config.NormalizeSelectedProviders(r.URL.Query()["provider"])
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	modelGroup, err := parseRunAntigravityModelGroup(r)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.runner.Run(r.Context(), RunRequest{Mode: mode, Scope: providerScope, Providers: providers, AntigravityModelGroup: modelGroup, AuthIndexes: r.URL.Query()["auth_index"]})
 	if err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -107,6 +133,22 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func parseRunAntigravityModelGroup(r *http.Request) (config.AntigravityModelGroup, error) {
+	value := r.URL.Query().Get("antigravity_model_group")
+	return config.ParseAntigravityModelGroup(value)
+}
+
+func parseRunProviderScope(r *http.Request) (config.ProviderScope, error) {
+	if r.URL.Query().Get("provider_scope") == "all" {
+		return config.ProviderScopeAll, nil
+	}
+	providers := r.URL.Query()["provider"]
+	if len(providers) > 0 {
+		return config.ProviderScopeSelected, nil
+	}
+	return "", nil
 }
 
 func (h *Handler) handleDiagnostics(w http.ResponseWriter, r *http.Request) {

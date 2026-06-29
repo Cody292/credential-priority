@@ -10,26 +10,31 @@ import (
 
 // Options 是 fresh-only 优先级规划器的已解析策略参数。
 type Options struct {
-	Now              time.Time
-	MaxPriority      int
-	MinChange        int
-	PaidFirst        bool
-	ResetBoostWithin time.Duration
-	ResetBoost       int
+	Now                           time.Time
+	MaxPriority                   int
+	StartPriorityByProvider       map[core.Provider]int
+	CodexFreeDepletedPriority     *int
+	CodexFreeDepletedDisabled     *bool
+	CodexPaidDepletedKeepsEnabled *bool
+	MinChange                     int
+	PaidFirst                     bool
+	ResetBoostWithin              time.Duration
+	ResetBoost                    int
 }
 
 // ProbeEvidence 是本轮 probe 产出的排序证据；EvidenceFresh=false 时不得驱动变更。
 type ProbeEvidence struct {
-	Provider      core.Provider
-	AuthIndex     string
-	ObservedAt    time.Time
-	ResetAt       *time.Time
-	Remaining     *int64
-	Freshness     core.Freshness
-	ProbeStatus   core.ProbeStatus
-	Status        EvidenceStatus
-	PlanType      core.PlanType
-	EvidenceFresh bool
+	Provider          core.Provider
+	AuthIndex         string
+	ObservedAt        time.Time
+	ResetAt           *time.Time
+	Remaining         *int64
+	LongWindowResetAt *time.Time
+	Freshness         core.Freshness
+	ProbeStatus       core.ProbeStatus
+	Status            EvidenceStatus
+	PlanType          core.PlanType
+	EvidenceFresh     bool
 }
 
 // EvidenceStatus 标识本轮 probe evidence 对规划器是否可用。
@@ -50,14 +55,15 @@ const (
 
 // PlanItem 表示单个凭证在本轮规划后的目标状态。
 type PlanItem struct {
-	Credential    core.Credential
-	Priority      int
-	Disabled      bool
-	PlanType      core.PlanType
-	ResetAt       *time.Time
-	Remaining     *int64
-	EvidenceFresh bool
-	Reason        string
+	Credential        core.Credential
+	Priority          int
+	Disabled          bool
+	PlanType          core.PlanType
+	ResetAt           *time.Time
+	Remaining         *int64
+	LongWindowResetAt *time.Time
+	EvidenceFresh     bool
+	Reason            string
 }
 
 // Change 表示需要由后续 apply writer 写回宿主的 fresh 证据变更。
@@ -78,7 +84,7 @@ type Plan struct {
 // PlanFreshOnly 只使用本轮 fresh probe evidence 生成优先级和禁用变更。
 func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, options Options) Plan {
 	evidenceByAuthIndex := freshEvidenceByAuthIndex(evidence)
-	items := initialItems(credentials, evidenceByAuthIndex)
+	items := initialItems(credentials, evidenceByAuthIndex, options)
 	planFreshPositive(items, options)
 	sortPlanItems(items)
 	return Plan{Items: items, Changes: changes(items, options)}
@@ -101,7 +107,7 @@ func isFreshReadyEvidence(evidence ProbeEvidence) bool {
 		evidence.Status == EvidenceStatusReady
 }
 
-func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]ProbeEvidence) []PlanItem {
+func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]ProbeEvidence, options Options) []PlanItem {
 	items := make([]PlanItem, len(credentials))
 	for index, credential := range credentials {
 		item := PlanItem{
@@ -113,18 +119,28 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 		}
 		evidence, ok := evidenceByAuthIndex[credential.AuthIndex]
 		if ok && !credential.Unavailable {
-			if evidence.Remaining != nil && *evidence.Remaining <= 0 {
+			if isCodexFreeDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
 				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
-				item.Priority = -1
-				item.Disabled = true
+				item.Priority = codexFreeDepletedPriority(options)
+				item.Disabled = codexFreeDepletedDisabled(options)
 				item.Reason = "fresh remaining depleted"
+			} else if isCodexPaidDepleted(credential, evidence) && !codexPaidDepletedKeepsEnabled(options) {
+				item.PlanType = evidence.PlanType
+				item.ResetAt = evidence.ResetAt
+				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
+				item.EvidenceFresh = true
+				item.Disabled = true
+				item.Reason = "fresh paid remaining depleted"
 			} else if evidence.Remaining != nil && evidence.ResetAt != nil {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
 				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
 			}
 		}
@@ -133,20 +149,90 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 	return items
 }
 
+func isCodexFreeDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return planItemProvider(PlanItem{Credential: credential}) == core.ProviderCodex &&
+		evidence.PlanType == core.PlanTypeFree &&
+		evidence.Remaining != nil &&
+		*evidence.Remaining <= 0
+}
+
+func isCodexPaidDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return planItemProvider(PlanItem{Credential: credential}) == core.ProviderCodex &&
+		paidRank(evidence.PlanType) > 0 &&
+		evidence.Remaining != nil &&
+		*evidence.Remaining <= 0
+}
+
+func codexFreeDepletedPriority(options Options) int {
+	if options.CodexFreeDepletedPriority == nil {
+		return -1
+	}
+	return *options.CodexFreeDepletedPriority
+}
+
+func codexFreeDepletedDisabled(options Options) bool {
+	if options.CodexFreeDepletedDisabled == nil {
+		return true
+	}
+	return *options.CodexFreeDepletedDisabled
+}
+
+func codexPaidDepletedKeepsEnabled(options Options) bool {
+	if options.CodexPaidDepletedKeepsEnabled == nil {
+		return true
+	}
+	return *options.CodexPaidDepletedKeepsEnabled
+}
+
 func planFreshPositive(items []PlanItem, options Options) {
 	candidates := positiveCandidates(items)
-	slices.SortStableFunc(candidates, func(left int, right int) int {
-		return compareCandidates(items[left], items[right], options)
-	})
-	priority := normalizedMaxPriority(options.MaxPriority)
-	for _, itemIndex := range candidates {
-		items[itemIndex].Priority = priority + resetBoost(items[itemIndex], options)
-		items[itemIndex].Disabled = false
-		items[itemIndex].Reason = "fresh remaining positive"
-		priority--
-		if priority < 1 {
-			priority = 1
+	for _, group := range providerCandidateGroups(items, candidates) {
+		slices.SortStableFunc(group, func(left int, right int) int {
+			return compareCandidates(items[left], items[right], options)
+		})
+		priority := startPriorityForProvider(planItemProvider(items[group[0]]), options)
+		for _, itemIndex := range group {
+			items[itemIndex].Priority = plannedPriority(items[itemIndex], priority, options)
+			items[itemIndex].Disabled = false
+			items[itemIndex].Reason = "fresh remaining positive"
+			priority--
+			if priority < 1 {
+				priority = 1
+			}
 		}
+	}
+}
+
+func providerCandidateGroups(items []PlanItem, candidates []int) [][]int {
+	order := make([]core.Provider, 0)
+	seen := make(map[core.Provider]struct{})
+	groups := make(map[core.Provider][]int)
+	for _, itemIndex := range candidates {
+		provider := planItemProvider(items[itemIndex])
+		if _, ok := seen[provider]; !ok {
+			seen[provider] = struct{}{}
+			order = append(order, provider)
+		}
+		groups[provider] = append(groups[provider], itemIndex)
+	}
+	result := make([][]int, 0, len(order))
+	for _, provider := range order {
+		result = append(result, groups[provider])
+	}
+	return result
+}
+
+func planItemProvider(item PlanItem) core.Provider {
+	if item.Credential.Provider != "" {
+		return item.Credential.Provider
+	}
+	switch item.Credential.Type {
+	case core.CredentialTypeCodex:
+		return core.ProviderCodex
+	case core.CredentialTypeAntigravity:
+		return core.ProviderAntigravity
+	default:
+		return core.ProviderUnknown
 	}
 }
 
@@ -198,21 +284,20 @@ func compareResetAt(left *time.Time, right *time.Time) int {
 	}
 }
 
-func resetBoost(item PlanItem, options Options) int {
-	if options.ResetBoostWithin <= 0 || options.ResetBoost <= 0 || item.ResetAt == nil {
-		return 0
-	}
-	if item.ResetAt.After(options.Now) && item.ResetAt.Sub(options.Now) < options.ResetBoostWithin {
-		return options.ResetBoost
-	}
-	return 0
-}
-
 func normalizedMaxPriority(maxPriority int) int {
 	if maxPriority < 1 {
 		return 1
 	}
 	return maxPriority
+}
+
+func startPriorityForProvider(provider core.Provider, options Options) int {
+	if options.StartPriorityByProvider != nil {
+		if priority, ok := options.StartPriorityByProvider[provider]; ok {
+			return normalizedMaxPriority(priority)
+		}
+	}
+	return normalizedMaxPriority(options.MaxPriority)
 }
 
 func sortPlanItems(items []PlanItem) {
@@ -252,6 +337,9 @@ func changes(items []PlanItem, options Options) []Change {
 func shouldChange(item PlanItem, options Options) bool {
 	if !item.EvidenceFresh {
 		return false
+	}
+	if item.Credential.PriorityMissing {
+		return true
 	}
 	if item.Priority == item.Credential.Priority && item.Disabled == item.Credential.Disabled {
 		return false
