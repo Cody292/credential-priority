@@ -1,6 +1,6 @@
 <div align="center">
 
-# credential-priority
+# Credential-Priority
 
 [中文](./README.md) | [English](./README.en.md)
 
@@ -13,8 +13,10 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 - [Overview](#overview)
 - [Workflow](#workflow)
 - [Build and Installation](#build-and-installation)
+- [Plugin Store Source](#plugin-store-source)
 - [Configuration](#configuration)
 - [Management Page and API](#management-page-and-api)
+- [License](#license)
 
 ## Overview
 
@@ -57,6 +59,19 @@ Place the artifact in one of the CPA plugin discovery directories:
 
 Extensions: `.so` on Linux and FreeBSD, `.dylib` on macOS, and `.dll` on Windows.
 
+## Plugin Store Source
+
+To install this plugin through the CPA plugin store, third-party sources must point to the raw JSON text of `registry.json`:
+
+```yaml
+plugins:
+  enabled: true
+  store-sources:
+    - "https://raw.githubusercontent.com/Cody292/credential-priority/main/registry.json"
+```
+
+Do not use `https://github.com/Cody292/credential-priority/blob/main/registry.json`. That URL returns a GitHub HTML page, which CPA cannot parse as a plugin store registry. After changing `store-sources`, restart CPA or reload configuration through the management UI, then refresh the plugin store list.
+
 ## Configuration
 
 Enable the CPA plugin system and keep plugin-owned fields under `plugins.configs.credential-priority`:
@@ -81,8 +96,6 @@ plugins:
       active_group_jitter: 10m
       disabled_group_size: 5
       disabled_probe_interval: 30m
-      cache_ttl: 15m
-      cache_path: "credential-priority/refresh-cache.json"
       priority_rules:
         enabled: false
         antigravity:
@@ -110,8 +123,6 @@ plugins:
 | `active_group_jitter` | Active group probe jitter. Default: `10m`. |
 | `disabled_group_size` | Disabled credential probe group size. Default: `5`. |
 | `disabled_probe_interval` | Disabled credential re-probe interval. Default: `30m`. |
-| `cache_ttl` | Probe cache TTL. Default: `15m`. |
-| `cache_path` | Probe cache path. Default: `credential-priority/refresh-cache.json`. |
 | `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. |
 
 ### Provider-Independent Rules
@@ -152,3 +163,7 @@ The following endpoints require the CPA management key:
   Exports redacted diagnostics.
 - `GET /v0/management/plugins/credential-priority/snapshot/latest`
   Returns the latest redacted decision snapshot.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
