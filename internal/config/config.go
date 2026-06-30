@@ -86,8 +86,6 @@ type rawConfig struct {
 	ActiveGroupJitter     *string                        `json:"active_group_jitter"`
 	DisabledGroupSize     *int                           `json:"disabled_group_size"`
 	DisabledProbeInterval *string                        `json:"disabled_probe_interval"`
-	CacheTTL              *string                        `json:"cache_ttl"`
-	CachePath             *string                        `json:"cache_path"`
 	ProviderOverrides     map[string]rawProviderOverride `json:"provider_overrides"`
 	PriorityRules         *rawPriorityRules              `json:"priority_rules"`
 }
@@ -298,13 +296,6 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 		}
 		cfg.PriorityRules = priorityRules
 	}
-	if raw.CachePath != nil {
-		cachePath := strings.TrimSpace(yamlText(*raw.CachePath))
-		if cachePath == "" {
-			return Config{}, invalid("cache_path", *raw.CachePath, "must not be empty")
-		}
-		cfg.CachePath = cachePath
-	}
 	for _, item := range []struct {
 		field  string
 		raw    *string
@@ -313,7 +304,6 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 		{"interval", raw.Interval, &cfg.Interval},
 		{"active_group_jitter", raw.ActiveGroupJitter, &cfg.ActiveGroupJitter},
 		{"disabled_probe_interval", raw.DisabledProbeInterval, &cfg.DisabledProbeInterval},
-		{"cache_ttl", raw.CacheTTL, &cfg.CacheTTL},
 	} {
 		if item.raw != nil {
 			parsed, err := parseDuration(item.field, *item.raw)
