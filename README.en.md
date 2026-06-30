@@ -28,19 +28,18 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 
 ## Workflow
 
-```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 28}} }%%
-flowchart LR
-    A[Load plugin] --> B[Read config]
-    B --> C[List credentials]
-    C --> D[Filter providers]
-    D --> E[Probe quota]
-    E --> F[Build plan]
-    F --> G{apply?}
-    G -->|yes| H[Write result]
-    G -->|no| I[Update status]
-    H --> J[Show redacted result]
-    I --> J
+```text
+Load plugin
+  -> Read plugins.configs.credential-priority config
+  -> Fetch CPA credential list through host.auth.list
+  -> Filter currently supported providers by provider_scope / selected_providers
+       - Antigravity: probe remaining quota for the selected model group
+       - Codex: probe availability by account plan and quota state
+  -> Build a sorting plan only from fresh and ready evidence in this run
+  -> Decide whether to write back by run mode
+       - apply: write priority and enabled state through host.auth.save
+       - preview: update status, diagnostics, snapshot, and logs only
+  -> Show redacted statistics, audit summary, and sorting result on the management page
 ```
 
 ## Build and Installation
@@ -88,14 +87,6 @@ plugins:
       provider_scope: "all"
       selected_providers: []
       antigravity_model_group: "gemini"
-      interval: 5m
-      max_concurrency: 2
-      min_change: 1
-      top_priority_probe_count: 10
-      active_group_size: 10
-      active_group_jitter: 10m
-      disabled_group_size: 5
-      disabled_probe_interval: 30m
       priority_rules:
         enabled: false
         antigravity:
@@ -115,14 +106,6 @@ plugins:
 | `provider_scope` | `all` handles all currently supported providers; `selected` handles only `selected_providers`. |
 | `selected_providers` | Supports only `antigravity` and `codex`. Empty selected scope falls back to `all`. |
 | `antigravity_model_group` | Antigravity quota group: `gemini` or `claude_gpt`. |
-| `interval` | Scheduled execution interval. Default: `5m`. |
-| `max_concurrency` | Concurrent probe count. Default: `2`. |
-| `min_change` | Priority changes below this threshold are skipped. Default: `1`. |
-| `top_priority_probe_count` | Number of high-priority credentials probed immediately. Default: `10`. |
-| `active_group_size` | Active credential probe group size. Default: `10`. |
-| `active_group_jitter` | Active group probe jitter. Default: `10m`. |
-| `disabled_group_size` | Disabled credential probe group size. Default: `5`. |
-| `disabled_probe_interval` | Disabled credential re-probe interval. Default: `30m`. |
 | `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. |
 
 ### Provider-Independent Rules

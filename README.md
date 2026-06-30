@@ -93,14 +93,6 @@ plugins:
       provider_scope: "all"
       selected_providers: []
       antigravity_model_group: "gemini"
-      interval: 5m
-      max_concurrency: 2
-      min_change: 1
-      top_priority_probe_count: 10
-      active_group_size: 10
-      active_group_jitter: 10m
-      disabled_group_size: 5
-      disabled_probe_interval: 30m
       priority_rules:
         enabled: false
         antigravity:
@@ -122,14 +114,6 @@ plugins:
 | `provider_scope` | `all` 表示处理全部当前支持的提供商；`selected` 表示只处理 `selected_providers`。 |
 | `selected_providers` | 仅支持 `antigravity` 与 `codex`；为空且 `provider_scope: selected` 时会回退为 `all`。 |
 | `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini` 与 `claude_gpt`。 |
-| `interval` | 自动执行间隔，默认 `5m`。 |
-| `max_concurrency` | 并发探测数，默认 `2`。 |
-| `min_change` | 低于该差值的优先级变化不写回，默认 `1`。 |
-| `top_priority_probe_count` | 高优先级凭证立即探测数量，默认 `10`。 |
-| `active_group_size` | 启用凭证分组探测数量，默认 `10`。 |
-| `active_group_jitter` | 启用凭证分组探测抖动，默认 `10m`。 |
-| `disabled_group_size` | 禁用凭证分组探测数量，默认 `5`。 |
-| `disabled_probe_interval` | 禁用凭证重新探测间隔，默认 `30m`。 |
 | `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略。 |
 
 ### 提供商独立排序规则
