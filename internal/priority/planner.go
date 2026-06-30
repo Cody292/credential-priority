@@ -128,13 +128,14 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.Priority = codexFreeDepletedPriority(options)
 				item.Disabled = codexFreeDepletedDisabled(options)
 				item.Reason = "fresh remaining depleted"
-			} else if isCodexPaidDepleted(credential, evidence) && !codexPaidDepletedKeepsEnabled(options) {
+			} else if isCodexPaidDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
 				item.Remaining = evidence.Remaining
 				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
-				item.Disabled = true
+				item.Priority = codexFreeDepletedPriority(options)
+				item.Disabled = !codexPaidDepletedKeepsEnabled(options)
 				item.Reason = "fresh paid remaining depleted"
 			} else if evidence.Remaining != nil && evidence.ResetAt != nil {
 				item.PlanType = evidence.PlanType
