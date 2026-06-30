@@ -20,7 +20,9 @@
         ]
       },
       "repository": "https://github.com/Cody292/credential-priority",
-      "tags": ["credential", "management"]
+      "homepage": "https://github.com/Cody292/credential-priority",
+      "license": "MIT",
+      "tags": ["credential", "priority", "quota", "management"]
     }
   ]
 }
