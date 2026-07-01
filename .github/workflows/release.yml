@@ -19,10 +19,48 @@ env:
   INPUT_TAG: ${{ inputs.tag }}
 
 jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}"
+          else
+            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes "${PLUGIN_NAME} ${tag} 发布。"
+          fi
+
   build-posix:
     name: Build ${{ matrix.goos }}_${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
+    needs: prepare-release
     permissions:
       contents: write
     strategy:
@@ -98,6 +136,7 @@ jobs:
     name: Build windows_amd64
     runs-on: windows-latest
     if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
+    needs: prepare-release
     permissions:
       contents: write
     steps:
@@ -170,6 +209,7 @@ jobs:
     name: Build windows_arm64
     runs-on: ubuntu-latest
     if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
+    needs: prepare-release
     permissions:
       contents: write
     steps:
@@ -233,6 +273,7 @@ jobs:
     name: Build freebsd_amd64
     runs-on: ubuntu-latest
     if: github.repository == 'Cody292/credential-priority' && github.actor == 'Cody292'
+    needs: prepare-release
     permissions:
       contents: write
     steps:
@@ -294,6 +335,7 @@ jobs:
     permissions:
       contents: write
     needs:
+      - prepare-release
       - build-posix
       - build-windows
       - build-windows-arm64
