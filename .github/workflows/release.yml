@@ -50,10 +50,15 @@ jobs:
             echo "release tag must point to current workflow commit" >&2
             exit 1
           fi
+          notes_file=".github/release-notes/${tag}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "release notes file not found: ${notes_file}" >&2
+            exit 1
+          fi
           if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}"
+            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$notes_file"
           else
-            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes "${PLUGIN_NAME} ${tag} 发布。"
+            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$notes_file"
           fi
 
   build-posix:
@@ -367,12 +372,19 @@ jobs:
             echo "release tag must point to current workflow commit" >&2
             exit 1
           fi
+          notes_file=".github/release-notes/${tag}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "release notes file not found: ${notes_file}" >&2
+            exit 1
+          fi
 
           mkdir -p dist
           gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
           (cd dist && sha256sum "${PLUGIN_NAME}"_*.zip > checksums.txt)
-          cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
-          ${PLUGIN_NAME} ${tag} 发布。
+          cp "$notes_file" "${RUNNER_TEMP}/release-notes.md"
+          cat >> "${RUNNER_TEMP}/release-notes.md" <<EOF
+
+          ## 发布资产
 
           - 自动构建并上传 darwin_amd64、darwin_arm64、freebsd_amd64、linux_amd64、linux_arm64、windows_amd64、windows_arm64 发布包。
           - 发布包按 CPA 插件商店格式命名，动态库位于 zip 根目录。
