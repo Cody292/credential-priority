@@ -79,6 +79,14 @@ type ProbeFailure struct {
 	NextProbeAt time.Time
 }
 
+// ProbeSchedule 是尚未到期的分批探测计划。
+type ProbeSchedule struct {
+	AuthIndex   string
+	Provider    core.Provider
+	ModelGroup  string
+	NextProbeAt time.Time
+}
+
 // Store 持有 refresh-cache.json 的内存状态，不暴露排序快照。
 type Store struct {
 	mu      sync.RWMutex
@@ -190,6 +198,24 @@ func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) erro
 	return nil
 }
 
+// MarkProbeScheduled 写入尚未到期的分批探测时间，不改变已有成功或失败证据。
+func (s *Store) MarkProbeScheduled(ctx context.Context, schedule ProbeSchedule) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mark probe scheduled context: %w", err)
+	}
+	key := entryKey(schedule.AuthIndex, schedule.ModelGroup)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.entries[key]
+	entry.SchemaVersion = SchemaVersion
+	entry.Provider = schedule.Provider
+	entry.ModelGroup = entryModelGroup(schedule.ModelGroup)
+	entry.AuthIndex = authIndexKey(schedule.AuthIndex)
+	entry.NextProbeAt = schedule.NextProbeAt.UTC()
+	s.entries[key] = entry
+	return nil
+}
+
 // NeedsProbe 判断 auth_index 是否必须重新执行 fresh probe。
 func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) {
 	if err := ctx.Err(); err != nil {
@@ -227,6 +253,14 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 		return true, nil
 	}
 	return false, nil
+}
+
+// HasEntry 判断指定 auth_index 与模型组是否已有缓存或分批计划。
+func (s *Store) HasEntry(authIndex string, modelGroup string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.entries[entryKey(authIndex, modelGroup)]
+	return ok
 }
 
 // DiagnosticEntry 返回单条缓存诊断信息的副本。

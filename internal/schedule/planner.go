@@ -9,8 +9,6 @@ import (
 	"credential-priority/internal/core"
 )
 
-const immediateProbeLimit = 30
-
 // ErrInvalidOptions 标识探测计划参数不满足调度器不变量。
 var ErrInvalidOptions = errors.New("schedule: invalid options")
 
@@ -28,6 +26,7 @@ type RNG interface {
 type Options struct {
 	Clock                 Clock
 	RNG                   RNG
+	ImmediateProbeLimit   int
 	TopPriorityProbeCount int
 	ActiveGroupSize       int
 	ActiveGroupJitter     time.Duration
@@ -59,7 +58,7 @@ func PlanProbeSchedule(credentials []core.Credential, options Options) (Plan, er
 		return Plan{}, err
 	}
 	now := options.Clock.Now()
-	if len(credentials) <= immediateProbeLimit {
+	if len(credentials) <= options.ImmediateProbeLimit {
 		return Plan{Immediate: probesAt(credentials, now)}, nil
 	}
 	ordered := sortedCredentials(credentials)
@@ -78,6 +77,8 @@ func validateOptions(options Options) error {
 		return fmt.Errorf("clock: %w", ErrInvalidOptions)
 	case options.RNG == nil:
 		return fmt.Errorf("rng: %w", ErrInvalidOptions)
+	case options.ImmediateProbeLimit < 1:
+		return fmt.Errorf("immediate probe limit %d: %w", options.ImmediateProbeLimit, ErrInvalidOptions)
 	case options.TopPriorityProbeCount < 1:
 		return fmt.Errorf("top priority probe count %d: %w", options.TopPriorityProbeCount, ErrInvalidOptions)
 	case options.ActiveGroupSize < 1:
@@ -162,7 +163,7 @@ func jitteredAt(now time.Time, options Options) time.Time {
 	if options.ActiveGroupJitter == 0 {
 		return now
 	}
-	offset := time.Duration(options.RNG.Int63n(options.ActiveGroupJitter.Nanoseconds() + 1))
+	offset := time.Duration(options.RNG.Int63n(options.ActiveGroupJitter.Nanoseconds()) + 1)
 	return now.Add(offset)
 }
 

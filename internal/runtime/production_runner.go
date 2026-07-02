@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"slices"
 	"time"
 
@@ -44,7 +45,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	probes, err := probesForRequest(credentials, scheduleOptions(request.Config, now), request.AuthIndexes)
+	probes, err := probesForRequest(ctx, store, credentials, scheduleOptions(request.Config, now), request.AuthIndexes, request.Config.AntigravityModelGroup)
 	if err != nil {
 		return err
 	}
@@ -177,15 +178,60 @@ func decrementResultCounter(result *apply.Result, change apply.ChangeResult) {
 	}
 }
 
-func probesForRequest(credentials []core.Credential, options schedule.Options, authIndexes []string) ([]schedule.Probe, error) {
+func probesForRequest(ctx context.Context, store *state.Store, credentials []core.Credential, options schedule.Options, authIndexes []string, modelGroup config.AntigravityModelGroup) ([]schedule.Probe, error) {
 	if len(authIndexes) == 0 {
 		probePlan, err := schedule.PlanProbeSchedule(credentials, options)
 		if err != nil {
 			return nil, err
 		}
-		return probePlan.Immediate, nil
+		return dueProbes(ctx, store, probePlan, options.Clock.Now(), modelGroup)
 	}
 	return probesAtCurrentTime(credentials, options.Clock.Now()), nil
+}
+
+func dueProbes(ctx context.Context, store *state.Store, plan schedule.Plan, now time.Time, modelGroup config.AntigravityModelGroup) ([]schedule.Probe, error) {
+	result := make([]schedule.Probe, 0, len(plan.Immediate))
+	for _, probe := range plan.Immediate {
+		provider := filterProvider(probe.Credential)
+		groupName := probeModelGroup(provider, modelGroup)
+		needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+		if err != nil {
+			return nil, err
+		}
+		if needsProbe {
+			result = append(result, probe)
+		}
+	}
+	for _, group := range append(plan.ActiveGroups, plan.DisabledGroups...) {
+		for _, probe := range group.Probes {
+			provider := filterProvider(probe.Credential)
+			groupName := probeModelGroup(provider, modelGroup)
+			if !probe.NextProbeAt.After(now) {
+				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+				if err != nil {
+					return nil, err
+				}
+				if needsProbe {
+					result = append(result, probe)
+				}
+				continue
+			}
+			if store.HasEntry(probe.Credential.AuthIndex, groupName) {
+				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+				if err != nil {
+					return nil, err
+				}
+				if needsProbe {
+					result = append(result, schedule.Probe{Credential: probe.Credential, NextProbeAt: now})
+				}
+				continue
+			}
+			if err := store.MarkProbeScheduled(ctx, state.ProbeSchedule{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, NextProbeAt: probe.NextProbeAt}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
 }
 
 func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {
@@ -262,7 +308,7 @@ func credentialsFromAuthFiles(files []host.AuthFile) ([]core.Credential, map[str
 }
 
 func scheduleOptions(cfg config.Config, now time.Time) schedule.Options {
-	return schedule.Options{Clock: fixedClock{now: now}, RNG: zeroRNG{}, TopPriorityProbeCount: cfg.TopPriorityProbeCount, ActiveGroupSize: cfg.ActiveGroupSize, ActiveGroupJitter: cfg.ActiveGroupJitter, DisabledGroupSize: cfg.DisabledGroupSize, DisabledProbeInterval: cfg.DisabledProbeInterval}
+	return schedule.Options{Clock: fixedClock{now: now}, RNG: realRNG{}, ImmediateProbeLimit: cfg.ImmediateProbeLimit, TopPriorityProbeCount: cfg.TopPriorityProbeCount, ActiveGroupSize: cfg.ActiveGroupSize, ActiveGroupJitter: cfg.ActiveGroupJitter, DisabledGroupSize: cfg.DisabledGroupSize, DisabledProbeInterval: cfg.DisabledProbeInterval}
 }
 
 func priorityOptions(cfg config.Config, now time.Time) priority.Options {
@@ -298,6 +344,12 @@ type zeroRNG struct{}
 
 func (zeroRNG) Int63n(int64) int64 {
 	return 0
+}
+
+type realRNG struct{}
+
+func (realRNG) Int63n(limit int64) int64 {
+	return rand.Int63n(limit)
 }
 
 func (r *Runtime) SaveSnapshot(ctx context.Context, snapshot apply.PlanSnapshot) error {
