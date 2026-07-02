@@ -31,6 +31,7 @@ type Config struct {
 	SelectedProviders     []string
 	AntigravityModelGroup AntigravityModelGroup
 	Interval              time.Duration
+	ImmediateProbeLimit   int
 	MaxConcurrency        int
 	MinChange             int
 	TopPriorityProbeCount int
@@ -78,23 +79,24 @@ type rawConfig struct {
 	ProviderScope         *string                        `json:"provider_scope"`
 	SelectedProviders     selectedProviderList           `json:"selected_providers"`
 	AntigravityModelGroup *string                        `json:"antigravity_model_group"`
-	Interval              *string                        `json:"interval"`
+	Interval              *rawDuration                   `json:"interval"`
+	ImmediateProbeLimit   *int                           `json:"immediate_probe_limit"`
 	MaxConcurrency        *int                           `json:"max_concurrency"`
 	MinChange             *int                           `json:"min_change"`
 	TopPriorityProbeCount *int                           `json:"top_priority_probe_count"`
 	ActiveGroupSize       *int                           `json:"active_group_size"`
-	ActiveGroupJitter     *string                        `json:"active_group_jitter"`
+	ActiveGroupJitter     *rawDuration                   `json:"active_group_jitter"`
 	DisabledGroupSize     *int                           `json:"disabled_group_size"`
-	DisabledProbeInterval *string                        `json:"disabled_probe_interval"`
+	DisabledProbeInterval *rawDuration                   `json:"disabled_probe_interval"`
 	ProviderOverrides     map[string]rawProviderOverride `json:"provider_overrides"`
 	PriorityRules         *rawPriorityRules              `json:"priority_rules"`
 }
 
 type rawProviderOverride struct {
-	Enabled        *bool   `json:"enabled"`
-	AutoApply      *bool   `json:"auto_apply"`
-	Interval       *string `json:"interval"`
-	MaxConcurrency *int    `json:"max_concurrency"`
+	Enabled        *bool        `json:"enabled"`
+	AutoApply      *bool        `json:"auto_apply"`
+	Interval       *rawDuration `json:"interval"`
+	MaxConcurrency *int         `json:"max_concurrency"`
 }
 
 type rawPriorityRules struct {
@@ -162,6 +164,25 @@ type selectedProviderList struct {
 	set    bool
 }
 
+type rawDuration string
+
+func (duration *rawDuration) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "null" {
+		return nil
+	}
+	var text string
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+	} else {
+		text = trimmed
+	}
+	*duration = rawDuration(text)
+	return nil
+}
+
 func (list *selectedProviderList) UnmarshalJSON(data []byte) error {
 	list.set = true
 	trimmed := strings.TrimSpace(string(data))
@@ -193,7 +214,8 @@ func Default() Config {
 		AutoApply:             false,
 		ProviderScope:         ProviderScopeAll,
 		AntigravityModelGroup: AntigravityModelGroupGemini,
-		Interval:              5 * time.Minute,
+		Interval:              15 * time.Minute,
+		ImmediateProbeLimit:   30,
 		MaxConcurrency:        2,
 		MinChange:             1,
 		TopPriorityProbeCount: 10,
@@ -298,7 +320,7 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 	}
 	for _, item := range []struct {
 		field  string
-		raw    *string
+		raw    *rawDuration
 		target *time.Duration
 	}{
 		{"interval", raw.Interval, &cfg.Interval},
@@ -306,7 +328,7 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 		{"disabled_probe_interval", raw.DisabledProbeInterval, &cfg.DisabledProbeInterval},
 	} {
 		if item.raw != nil {
-			parsed, err := parseDuration(item.field, *item.raw)
+			parsed, err := parseDuration(item.field, string(*item.raw))
 			if err != nil {
 				return Config{}, err
 			}
@@ -321,6 +343,7 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 	}{
 		{"max_concurrency", raw.MaxConcurrency, &cfg.MaxConcurrency, 1},
 		{"min_change", raw.MinChange, &cfg.MinChange, 0},
+		{"immediate_probe_limit", raw.ImmediateProbeLimit, &cfg.ImmediateProbeLimit, 1},
 		{"top_priority_probe_count", raw.TopPriorityProbeCount, &cfg.TopPriorityProbeCount, 1},
 		{"active_group_size", raw.ActiveGroupSize, &cfg.ActiveGroupSize, 1},
 		{"disabled_group_size", raw.DisabledGroupSize, &cfg.DisabledGroupSize, 1},
@@ -402,7 +425,7 @@ func (raw rawCodexPriority) apply(rule CodexPriorityRules) (CodexPriorityRules, 
 func (raw rawProviderOverride) apply(providerName string) (ProviderOverride, error) {
 	override := ProviderOverride{Enabled: raw.Enabled, AutoApply: raw.AutoApply}
 	if raw.Interval != nil {
-		parsed, err := parseDuration("provider_overrides."+providerName+".interval", *raw.Interval)
+		parsed, err := parseDuration("provider_overrides."+providerName+".interval", string(*raw.Interval))
 		if err != nil {
 			return ProviderOverride{}, err
 		}

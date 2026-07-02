@@ -191,7 +191,11 @@ func parseYAMLMap(data string) (map[string]any, error) {
 
 func parseDuration(field string, value string) (time.Duration, error) {
 	text := yamlText(value)
-	parsed, err := time.ParseDuration(text)
+	durationText := text
+	if _, err := strconv.Atoi(text); err == nil {
+		durationText = text + "m"
+	}
+	parsed, err := time.ParseDuration(durationText)
 	if err != nil || parsed <= 0 {
 		return 0, invalid(field, text, "must be a positive duration")
 	}
