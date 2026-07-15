@@ -118,7 +118,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			Reason:     "keep current state",
 		}
 		evidence, ok := evidenceByAuthIndex[credential.AuthIndex]
-		if ok && !credential.Unavailable {
+		if ok {
 			if isCodexFreeDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
