@@ -58,11 +58,15 @@ func PlanProbeSchedule(credentials []core.Credential, options Options) (Plan, er
 		return Plan{}, err
 	}
 	now := options.Clock.Now()
-	if len(credentials) <= options.ImmediateProbeLimit {
-		return Plan{Immediate: probesAt(credentials, now)}, nil
-	}
+	// 所有路径先排序并拆分 active/disabled，避免 early-return 把 Disabled 混入 Immediate。
 	ordered := sortedCredentials(credentials)
 	active, disabled := partitionCredentials(ordered)
+	if len(credentials) <= options.ImmediateProbeLimit {
+		return Plan{
+			Immediate:      probesAt(active, now),
+			DisabledGroups: disabledProbeGroups(disabled, now, options),
+		}, nil
+	}
 	immediateCount := min(options.TopPriorityProbeCount, len(active))
 	return Plan{
 		Immediate:      probesAt(active[:immediateCount], now),

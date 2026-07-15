@@ -33,16 +33,21 @@ func pickEffectiveWindow(usage whamUsage, observedAt time.Time) (effectiveWindow
 func pickPaidWindow(usage whamUsage, observedAt time.Time) (effectiveWindow, bool) {
 	fiveHour, hasFiveHour := pickWindow(usage, observedAt, isFiveHourWindow)
 	weekly, hasWeekly := pickWindow(usage, observedAt, isWeeklyWindow)
-	if !hasFiveHour || !hasWeekly {
-		return effectiveWindow{}, false
+	// fiveHour + weekly 同时存在：保留原语义（优先 5h，weekly 耗尽则回退 weekly）。
+	if hasFiveHour && hasWeekly {
+		if weekly.remaining <= 0 {
+			return effectiveWindow{resetAt: weekly.resetAt, remaining: 0, windowType: WindowWeekly}, true
+		}
+		if fiveHour.remaining <= 0 {
+			return effectiveWindow{resetAt: fiveHour.resetAt, remaining: 0, windowType: WindowFiveHour, longWindowResetAt: weekly.resetAt}, true
+		}
+		return effectiveWindow{resetAt: fiveHour.resetAt, remaining: fiveHour.remaining, windowType: WindowFiveHour, longWindowResetAt: weekly.resetAt}, true
 	}
-	if weekly.remaining <= 0 {
-		return effectiveWindow{resetAt: weekly.resetAt, remaining: 0, windowType: WindowWeekly}, true
+	// Codex 取消 5h 限制后：仅 weekly 付费窗口时动态识别为付费额度。
+	if hasWeekly {
+		return effectiveWindow{resetAt: weekly.resetAt, remaining: weekly.remaining, windowType: WindowWeekly}, true
 	}
-	if fiveHour.remaining <= 0 {
-		return effectiveWindow{resetAt: fiveHour.resetAt, remaining: 0, windowType: WindowFiveHour, longWindowResetAt: weekly.resetAt}, true
-	}
-	return effectiveWindow{resetAt: fiveHour.resetAt, remaining: fiveHour.remaining, windowType: WindowFiveHour, longWindowResetAt: weekly.resetAt}, true
+	return effectiveWindow{}, false
 }
 
 func pickFreeWindow(usage whamUsage, observedAt time.Time) (effectiveWindow, bool) {

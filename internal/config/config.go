@@ -222,7 +222,7 @@ func Default() Config {
 		ActiveGroupSize:       10,
 		ActiveGroupJitter:     10 * time.Minute,
 		DisabledGroupSize:     5,
-		DisabledProbeInterval: 30 * time.Minute,
+		DisabledProbeInterval: 1 * time.Hour,
 		CacheTTL:              15 * time.Minute,
 		CachePath:             DirectoryName + "/refresh-cache.json",
 		PriorityRules:         defaultPriorityRules(),

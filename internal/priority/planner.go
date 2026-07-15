@@ -126,7 +126,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
 				item.Priority = codexFreeDepletedPriority(options)
-				item.Disabled = codexFreeDepletedDisabled(options)
+				item.Disabled = credential.Disabled || codexFreeDepletedDisabled(options)
 				item.Reason = "fresh remaining depleted"
 			} else if isCodexPaidDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
@@ -135,7 +135,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
 				item.Priority = codexFreeDepletedPriority(options)
-				item.Disabled = !codexPaidDepletedKeepsEnabled(options)
+				item.Disabled = credential.Disabled || !codexPaidDepletedKeepsEnabled(options)
 				item.Reason = "fresh paid remaining depleted"
 			} else if evidence.Remaining != nil && evidence.ResetAt != nil {
 				item.PlanType = evidence.PlanType
@@ -194,6 +194,7 @@ func planFreshPositive(items []PlanItem, options Options) {
 		priority := startPriorityForProvider(planItemProvider(items[group[0]]), options)
 		for _, itemIndex := range group {
 			items[itemIndex].Priority = plannedPriority(items[itemIndex], priority, options)
+			// 禁用因额度耗尽的凭证，在探测到正向剩余额度后自动恢复启用并参与常规排序。
 			items[itemIndex].Disabled = false
 			items[itemIndex].Reason = "fresh remaining positive"
 			priority--
