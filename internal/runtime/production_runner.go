@@ -45,7 +45,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	probes, err := probesForRequest(ctx, store, credentials, scheduleOptions(request.Config, now), request.AuthIndexes, request.Config.AntigravityModelGroup)
+	probes, err := probesForRequest(ctx, store, credentials, scheduleOptions(request.Config, now), request.AuthIndexes, request.Config.AntigravityModelGroup, request.Trigger)
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,10 @@ func decrementResultCounter(result *apply.Result, change apply.ChangeResult) {
 	}
 }
 
-func probesForRequest(ctx context.Context, store *state.Store, credentials []core.Credential, options schedule.Options, authIndexes []string, modelGroup config.AntigravityModelGroup) ([]schedule.Probe, error) {
+func probesForRequest(ctx context.Context, store *state.Store, credentials []core.Credential, options schedule.Options, authIndexes []string, modelGroup config.AntigravityModelGroup, trigger Trigger) ([]schedule.Probe, error) {
+	if trigger == TriggerManual || trigger == TriggerManualApply {
+		return probesAtCurrentTime(credentials, options.Clock.Now()), nil
+	}
 	if len(authIndexes) == 0 {
 		probePlan, err := schedule.PlanProbeSchedule(credentials, options)
 		if err != nil {
