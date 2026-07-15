@@ -51,14 +51,19 @@ jobs:
             exit 1
           fi
           notes_file=".github/release-notes/${tag}.md"
+          release_notes_file="$notes_file"
           if [ ! -f "$notes_file" ]; then
-            echo "release notes file not found: ${notes_file}" >&2
-            exit 1
+            echo "release notes file not found: ${notes_file}; generating release notes from commits" >&2
+            release_notes_file="${RUNNER_TEMP}/release-notes.md"
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${tag}" \
+              -f target_commitish="${tag_sha}" \
+              --jq .body > "$release_notes_file"
           fi
           if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$notes_file"
+            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$release_notes_file"
           else
-            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$notes_file"
+            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$release_notes_file"
           fi
 
   build-posix:
@@ -374,14 +379,18 @@ jobs:
           fi
           notes_file=".github/release-notes/${tag}.md"
           if [ ! -f "$notes_file" ]; then
-            echo "release notes file not found: ${notes_file}" >&2
-            exit 1
+            echo "release notes file not found: ${notes_file}; generating release notes from commits" >&2
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${tag}" \
+              -f target_commitish="${tag_sha}" \
+              --jq .body > "${RUNNER_TEMP}/release-notes.md"
+          else
+            cp "$notes_file" "${RUNNER_TEMP}/release-notes.md"
           fi
 
           mkdir -p dist
           gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
           (cd dist && sha256sum "${PLUGIN_NAME}"_*.zip > checksums.txt)
-          cp "$notes_file" "${RUNNER_TEMP}/release-notes.md"
           cat >> "${RUNNER_TEMP}/release-notes.md" <<EOF
 
           ## 发布资产
