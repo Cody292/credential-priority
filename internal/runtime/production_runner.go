@@ -57,23 +57,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, now))
+	plan = withProbeFailureTemporaryDisables(plan, evidence)
 	if request.Trigger == TriggerManual {
 		result := apply.Result{Snapshot: apply.Snapshot(plan)}
 		r.snapshotRun(result, "dry-run plan generated")
-		return nil
-	}
-	if request.Trigger == TriggerManualApply {
-		failures := manualProbeFailures(plan, evidence)
-		result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
-		if err != nil {
-			return err
-		}
-		if len(failures) > 0 {
-			appendManualProbeFailures(&result, failures)
-			r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
-			return nil
-		}
-		r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
 		return nil
 	}
 	result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
@@ -112,7 +99,41 @@ func hasProbeFailure(evidence []priority.ProbeEvidence) bool {
 	})
 }
 
-func manualProbeFailures(plan priority.Plan, evidence []priority.ProbeEvidence) []apply.ChangeResult {
+func withProbeFailureTemporaryDisables(plan priority.Plan, evidence []priority.ProbeEvidence) priority.Plan {
+	disables := probeFailureDisableChanges(plan, evidence)
+	if len(disables) == 0 {
+		return plan
+	}
+	byAuth := make(map[string]struct{}, len(disables))
+	for _, change := range disables {
+		byAuth[change.Credential.AuthIndex] = struct{}{}
+	}
+	for index := range plan.Items {
+		if _, ok := byAuth[plan.Items[index].Credential.AuthIndex]; !ok {
+			continue
+		}
+		plan.Items[index].Disabled = true
+		plan.Items[index].Reason = "failedQuotaFetch"
+	}
+	changeIndex := make(map[string]int, len(plan.Changes))
+	for index, change := range plan.Changes {
+		changeIndex[change.Credential.AuthIndex] = index
+	}
+	for _, change := range disables {
+		if existing, ok := changeIndex[change.Credential.AuthIndex]; ok {
+			plan.Changes[existing].Disabled = true
+			plan.Changes[existing].EvidenceFresh = true
+			if plan.Changes[existing].Reason == "" || plan.Changes[existing].Reason == "keep current state" {
+				plan.Changes[existing].Reason = change.Reason
+			}
+			continue
+		}
+		plan.Changes = append(plan.Changes, change)
+	}
+	return plan
+}
+
+func probeFailureDisableChanges(plan priority.Plan, evidence []priority.ProbeEvidence) []priority.Change {
 	failures := make(map[string]priority.ProbeEvidence)
 	for _, item := range evidence {
 		if item.Status == priority.EvidenceStatusProbeFailed {
@@ -122,60 +143,28 @@ func manualProbeFailures(plan priority.Plan, evidence []priority.ProbeEvidence) 
 	if len(failures) == 0 {
 		return nil
 	}
-	results := make([]apply.ChangeResult, 0, len(failures))
+	changes := make([]priority.Change, 0, len(failures))
 	for _, item := range plan.Items {
 		failure, ok := failures[item.Credential.AuthIndex]
 		if !ok {
 			continue
 		}
-		failedItem := item
-		failedItem.Credential.Provider = failure.Provider
-		failedItem.Reason = "failedQuotaFetch"
-		change := apply.FailureResult(failedItem, fmt.Errorf("failedQuotaFetch"))
-		results = append(results, change)
-	}
-	return results
-}
-
-func appendManualProbeFailures(result *apply.Result, failures []apply.ChangeResult) {
-	for _, failure := range failures {
-		replaceOrAppendManualProbeFailure(result, failure)
-	}
-}
-
-func replaceOrAppendManualProbeFailure(result *apply.Result, failure apply.ChangeResult) {
-	key := manualProbeFailureKey(failure)
-	for index := 0; index < len(result.Changes); index++ {
-		if manualProbeFailureKey(result.Changes[index]) != key {
+		if item.Credential.Disabled {
 			continue
 		}
-		decrementResultCounter(result, result.Changes[index])
-		result.Changes = append(result.Changes[:index], result.Changes[index+1:]...)
-		index--
+		credential := item.Credential
+		if failure.Provider != "" {
+			credential.Provider = failure.Provider
+		}
+		changes = append(changes, priority.Change{
+			Credential:    credential,
+			Priority:      credential.Priority,
+			Disabled:      true,
+			EvidenceFresh: true,
+			Reason:        "failedQuotaFetch",
+		})
 	}
-	result.Changes = append(result.Changes, failure)
-	result.Attempted++
-	result.Failed++
-}
-
-func manualProbeFailureKey(change apply.ChangeResult) string {
-	if change.RetryAuthIndex != "" {
-		return change.RetryAuthIndex
-	}
-	return change.AuthIndex
-}
-
-func decrementResultCounter(result *apply.Result, change apply.ChangeResult) {
-	switch change.Status {
-	case apply.ChangeStatusSuccess:
-		result.Attempted--
-		result.Succeeded--
-	case apply.ChangeStatusFailed:
-		result.Attempted--
-		result.Failed--
-	case apply.ChangeStatusSkipped:
-		result.Skipped--
-	}
+	return changes
 }
 
 func probesForRequest(ctx context.Context, store *state.Store, credentials []core.Credential, options schedule.Options, authIndexes []string, modelGroup config.AntigravityModelGroup, trigger Trigger) ([]schedule.Probe, error) {
@@ -315,7 +304,7 @@ func scheduleOptions(cfg config.Config, now time.Time) schedule.Options {
 }
 
 func priorityOptions(cfg config.Config, now time.Time) priority.Options {
-	options := priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 2 * time.Hour, ResetBoost: 50}
+	options := priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 5 * time.Hour, ResetBoost: 50}
 	if cfg.PriorityRules.Enabled {
 		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
 		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled

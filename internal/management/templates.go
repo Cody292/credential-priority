@@ -167,7 +167,7 @@ const StatusHTML = `<!DOCTYPE html>
 <body>
     <div class="container">
         <div class="topbar">
-            <h1><span data-i18n="pageTitle">凭证优先级管理</span><span class="version-badge">v1.0.5</span></h1>
+            <h1><span data-i18n="pageTitle">凭证优先级管理</span><span class="version-badge">v1.0.6</span></h1>
             <div class="topbar-actions">
                 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
                 <div class="language-shell">

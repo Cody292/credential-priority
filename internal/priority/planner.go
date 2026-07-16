@@ -186,7 +186,7 @@ func codexPaidDepletedKeepsEnabled(options Options) bool {
 }
 
 func planFreshPositive(items []PlanItem, options Options) {
-	candidates := positiveCandidates(items)
+	candidates := positiveCandidates(items, options)
 	for _, group := range providerCandidateGroups(items, candidates) {
 		slices.SortStableFunc(group, func(left int, right int) int {
 			return compareCandidates(items[left], items[right], options)
@@ -238,10 +238,19 @@ func planItemProvider(item PlanItem) core.Provider {
 	}
 }
 
-func positiveCandidates(items []PlanItem) []int {
+func positiveCandidates(items []PlanItem, options Options) []int {
 	candidates := make([]int, 0, len(items))
 	for index, item := range items {
-		if item.EvidenceFresh && item.Remaining != nil && *item.Remaining > 0 {
+		if !item.EvidenceFresh || item.Remaining == nil {
+			continue
+		}
+		if *item.Remaining > 0 {
+			candidates = append(candidates, index)
+			continue
+		}
+		// Remaining<=0：仅 long-window near-reset 可再入排序（Gemini 周额度）；
+		// Codex depleted 已在 initialItems 处理，禁止再进 planFreshPositive。
+		if planItemProvider(item) != core.ProviderCodex && resetBoost(item, options) > 0 {
 			candidates = append(candidates, index)
 		}
 	}
