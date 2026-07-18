@@ -137,6 +137,15 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.Priority = codexFreeDepletedPriority(options)
 				item.Disabled = credential.Disabled || !codexPaidDepletedKeepsEnabled(options)
 				item.Reason = "fresh paid remaining depleted"
+			} else if isAntigravityWeeklyDepleted(credential, evidence) {
+				item.PlanType = evidence.PlanType
+				item.ResetAt = evidence.ResetAt
+				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
+				item.EvidenceFresh = true
+				item.Priority = -1
+				item.Disabled = true
+				item.Reason = "fresh remaining depleted"
 			} else if evidence.Remaining != nil && evidence.ResetAt != nil {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
@@ -162,6 +171,24 @@ func isCodexPaidDepleted(credential core.Credential, evidence ProbeEvidence) boo
 		paidRank(evidence.PlanType) > 0 &&
 		evidence.Remaining != nil &&
 		*evidence.Remaining <= 0
+}
+
+func isAntigravityWeeklyDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return planItemProvider(PlanItem{Credential: credential}) == core.ProviderAntigravity &&
+		evidence.Remaining != nil &&
+		*evidence.Remaining <= 0
+}
+
+func isAntigravityWeeklyDepletedItem(item PlanItem) bool {
+	return planItemProvider(item) == core.ProviderAntigravity &&
+		isFreeOrUnknownPlan(item.PlanType) &&
+		item.Remaining != nil &&
+		*item.Remaining <= 0 &&
+		item.LongWindowResetAt != nil
+}
+
+func isFreeOrUnknownPlan(planType core.PlanType) bool {
+	return planType == core.PlanTypeFree || planType == core.PlanTypeUnknown
 }
 
 func codexFreeDepletedPriority(options Options) int {
@@ -246,6 +273,9 @@ func positiveCandidates(items []PlanItem, options Options) []int {
 		}
 		if *item.Remaining > 0 {
 			candidates = append(candidates, index)
+			continue
+		}
+		if isAntigravityWeeklyDepletedItem(item) {
 			continue
 		}
 		// Remaining<=0：仅 long-window near-reset 可再入排序（Gemini 周额度）；

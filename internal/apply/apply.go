@@ -168,7 +168,11 @@ func applyChange(ctx context.Context, writer Host, change priority.Change) Chang
 	}
 	if disabledChanged {
 		result.DisabledAttempted = true
-		if err := writer.PatchDisabled(ctx, change.Credential.Name, change.Disabled); err != nil {
+		disabledPatchName := change.Credential.Name
+		if disabledPatchName == "" {
+			disabledPatchName = change.Credential.AuthIndex
+		}
+		if err := writer.PatchDisabled(ctx, disabledPatchName, change.Disabled); err != nil {
 			result.Status = ChangeStatusFailed
 			result.Error = redactedError(fmt.Errorf("patch disabled: %w", err))
 			return result

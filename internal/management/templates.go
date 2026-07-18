@@ -467,7 +467,7 @@ const StatusHTML = `<!DOCTYPE html>
                 document.getElementById("resultModal").hidden=false;
                 return;
             }
-            const changes=result.changes.filter(function(c){return (c.status==="success"&&c.priority_attempted)||c.status === "failed";});
+            const changes=result.changes.filter(shouldShowChange);
             if(changes.length===0){
                 container.innerHTML="<div style=\"text-align: center; padding: 12px; color: var(--muted);\">" + textFor("noChanges") + "</div>";
                 document.getElementById("resultModal").hidden=false;
@@ -506,9 +506,9 @@ const StatusHTML = `<!DOCTYPE html>
                 changeSpan.style.color="var(--blue)";
                 changeSpan.style.flexShrink="0";
                 changeSpan.style.whiteSpace="nowrap";
-                changeSpan.textContent=c.status === "failed" ? textFor("failedQuotaFetch") : priorityChangeText(c);
+                changeSpan.textContent=isFailedQuotaFetch(c) ? textFor("failedQuotaFetch") : priorityChangeText(c);
                 row.append(badge,nameSpan,changeSpan);
-                if(c.status === "failed"){
+                if(shouldShowRetry(c)){
                     row.setAttribute("data-auth-index", c.retry_auth_index||"");
                     const retry=document.createElement("button");
                     retry.type="button";
@@ -521,6 +521,9 @@ const StatusHTML = `<!DOCTYPE html>
             });
             document.getElementById("resultModal").hidden=false;
         }
+        function isFailedQuotaFetch(c){return c.reason==="failedQuotaFetch";}
+        function shouldShowChange(c){return (c.status==="success"&&c.priority_attempted)||(c.status==="success"&&c.disabled_attempted&&isFailedQuotaFetch(c))||c.status === "failed";}
+        function shouldShowRetry(c){return c.status === "failed"||isFailedQuotaFetch(c);}
         function retryCredentialQuota(c, button){const provider=String(c.provider||"").toLowerCase();runCredentialPriority("apply",provider?[provider]:[],button,c.retry_auth_index||"",true);}
         function openProviderModal(){if(credentialSummaryLoading){return;}document.getElementById("providerModal").hidden=false;document.getElementById("modalNotice").textContent="";document.getElementById("modalNotice").className="message-box";}
         function closeProviderModal(){document.getElementById("providerModal").hidden=true;document.getElementById("modalNotice").textContent="";document.getElementById("modalNotice").className="message-box";}
