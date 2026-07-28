@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"credential-priority/internal/config"
@@ -26,13 +27,22 @@ type collectInput struct {
 	now                   time.Time
 	cacheTTL              time.Duration
 	forceProbe            bool
+	maxConcurrency        int
 	antigravityModelGroup config.AntigravityModelGroup
+}
+
+type probeJob struct {
+	strategy     core.StrategyName
+	provider     core.Provider
+	credential   core.Credential
+	accountID    string
+	authMaterial authMaterial
 }
 
 func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.ProbeEvidence, error) {
 	registry := provider.NewRegistry()
 	probers := probeSet{codex: codex.NewProber(input.client, fixedClock{now: input.now}), antigravity: antigravity.NewProber(input.client, fixedClock{now: input.now}), xai: xai.NewProber(input.client, fixedClock{now: input.now})}
-	evidence := make([]priority.ProbeEvidence, 0, len(input.probes))
+	jobs := make([]probeJob, 0, len(input.probes))
 	for _, probe := range input.probes {
 		registryResult := registry.Evaluate(probe.Credential)
 		if !probeStrategySupported(registryResult.StrategyName) {
@@ -45,12 +55,119 @@ func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.P
 		if !needsProbe {
 			continue
 		}
-		item, err := probers.probeAndRecord(ctx, probeAndRecordInput{store: input.store, strategy: registryResult.StrategyName, provider: registryResult.Provider, credential: probe.Credential, accountID: input.accountIDs[probe.Credential.AuthIndex], authMaterial: input.authMaterials[probe.Credential.AuthIndex], now: input.now, antigravityModelGroup: input.antigravityModelGroup})
-		if err != nil {
-			return nil, err
+		jobs = append(jobs, probeJob{
+			strategy:     registryResult.StrategyName,
+			provider:     registryResult.Provider,
+			credential:   probe.Credential,
+			accountID:    input.accountIDs[probe.Credential.AuthIndex],
+			authMaterial: input.authMaterials[probe.Credential.AuthIndex],
+		})
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return runProbeJobs(ctx, probers, input, jobs)
+}
+
+func runProbeJobs(ctx context.Context, probers probeSet, input collectInput, jobs []probeJob) ([]priority.ProbeEvidence, error) {
+	workers := input.maxConcurrency
+	if workers < 1 {
+		workers = 2
+	}
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	if workers == 1 {
+		evidence := make([]priority.ProbeEvidence, 0, len(jobs))
+		for _, job := range jobs {
+			item, err := probers.probeAndRecord(ctx, probeAndRecordInput{
+				store: input.store, strategy: job.strategy, provider: job.provider, credential: job.credential,
+				accountID: job.accountID, authMaterial: job.authMaterial, now: input.now, antigravityModelGroup: input.antigravityModelGroup,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if item.Status != priority.EvidenceStatusUnknown {
+				evidence = append(evidence, item)
+			}
 		}
-		if item.Status != priority.EvidenceStatusUnknown {
-			evidence = append(evidence, item)
+		return evidence, nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type result struct {
+		index int
+		item  priority.ProbeEvidence
+		err   error
+	}
+	jobsCh := make(chan int)
+	resultsCh := make(chan result, len(jobs))
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobsCh {
+				if runCtx.Err() != nil {
+					return
+				}
+				job := jobs[index]
+				item, err := probers.probeAndRecord(runCtx, probeAndRecordInput{
+					store: input.store, strategy: job.strategy, provider: job.provider, credential: job.credential,
+					accountID: job.accountID, authMaterial: job.authMaterial, now: input.now, antigravityModelGroup: input.antigravityModelGroup,
+				})
+				select {
+				case resultsCh <- result{index: index, item: item, err: err}:
+				case <-runCtx.Done():
+					return
+				}
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobsCh)
+		for index := range jobs {
+			select {
+			case jobsCh <- index:
+			case <-runCtx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	ordered := make([]priority.ProbeEvidence, len(jobs))
+	present := make([]bool, len(jobs))
+	var firstErr error
+	for res := range resultsCh {
+		if res.err != nil {
+			if firstErr == nil {
+				firstErr = res.err
+			}
+			cancel()
+			continue
+		}
+		if res.item.Status != priority.EvidenceStatusUnknown {
+			ordered[res.index] = res.item
+			present[res.index] = true
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	evidence := make([]priority.ProbeEvidence, 0, len(jobs))
+	for index, ok := range present {
+		if ok {
+			evidence = append(evidence, ordered[index])
 		}
 	}
 	return evidence, nil

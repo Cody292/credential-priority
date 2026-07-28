@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"credential-priority/internal/apply"
@@ -49,7 +51,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials, now: now, cacheTTL: request.Config.CacheTTL, forceProbe: request.Trigger == TriggerManualApply, antigravityModelGroup: request.Config.AntigravityModelGroup}, request.Trigger)
+	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials, now: now, cacheTTL: request.Config.CacheTTL, forceProbe: request.Trigger == TriggerManualApply, maxConcurrency: request.Config.MaxConcurrency, antigravityModelGroup: request.Config.AntigravityModelGroup}, request.Trigger)
 	if err != nil {
 		return err
 	}
@@ -69,6 +71,144 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 	r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
 	return nil
+}
+
+// runAutoParallelProviders 在一轮自动任务内按 provider 并行探测与写回。
+// 共享同一 state.Store，结束后统一 SaveAtomic，避免并行 Load/Save 互相覆盖。
+// 调用方必须已持有 runMu（AutoApply 入口）。
+func (r *Runtime) runAutoParallelProviders(ctx context.Context, request TaskRequest) error {
+	if r.hostCallbacks == nil {
+		return errMissingHostCallbacks
+	}
+	now := r.clock.Now().UTC()
+	client := host.NewClient(r.hostCallbacks)
+	files, err := client.ListAuthFiles(ctx)
+	if err != nil {
+		return err
+	}
+	allCredentials, accountIDs := credentialsFromAuthFiles(files)
+	allCredentials = filterCredentialsByProvider(allCredentials, request.Config)
+	allCredentials = filterCredentialsByAuthIndex(allCredentials, request.AuthIndexes)
+	allCredentials, authMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, allCredentials)
+	if err != nil {
+		return err
+	}
+	store, err := state.Load(ctx, request.Config.CachePath)
+	if err != nil {
+		return err
+	}
+
+	providers := autoProvidersFromCredentials(allCredentials, request.Config)
+	if len(providers) == 0 {
+		r.snapshotRun(apply.Result{}, "auto_apply no supported providers")
+		return nil
+	}
+
+	type providerResult struct {
+		provider core.Provider
+		result   apply.Result
+		err      error
+	}
+	results := make(chan providerResult, len(providers))
+	var wg sync.WaitGroup
+	for _, providerName := range providers {
+		providerName := providerName
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			provider := core.Provider(providerName)
+			credentials := filterCredentialsToProvider(allCredentials, provider)
+			if len(credentials) == 0 {
+				results <- providerResult{provider: provider}
+				return
+			}
+			probes, err := probesForRequest(ctx, store, credentials, scheduleOptions(request.Config, now), request.AuthIndexes, request.Config.AntigravityModelGroup, TriggerAutoApply)
+			if err != nil {
+				results <- providerResult{provider: provider, err: err}
+				return
+			}
+			evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{
+				client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials,
+				now: now, cacheTTL: request.Config.CacheTTL, forceProbe: false,
+				maxConcurrency: request.Config.MaxConcurrency, antigravityModelGroup: request.Config.AntigravityModelGroup,
+			}, TriggerAutoApply)
+			if err != nil {
+				results <- providerResult{provider: provider, err: err}
+				return
+			}
+			plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, now))
+			plan = withProbeFailureTemporaryDisables(plan, evidence)
+			result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
+			results <- providerResult{provider: provider, result: result, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var (
+		firstErr  error
+		attempted int
+		succeeded int
+		failed    int
+		skipped   int
+	)
+	parts := make([]string, 0, len(providers))
+	for item := range results {
+		if item.err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", item.provider, item.err)
+		}
+		attempted += item.result.Attempted
+		succeeded += item.result.Succeeded
+		failed += item.result.Failed
+		skipped += item.result.Skipped
+		parts = append(parts, fmt.Sprintf("%s attempted=%d succeeded=%d failed=%d skipped=%d", item.provider, item.result.Attempted, item.result.Succeeded, item.result.Failed, item.result.Skipped))
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		return err
+	}
+	summary := "auto_apply parallel: " + strings.Join(parts, "; ")
+	r.snapshotRun(apply.Result{Attempted: attempted, Succeeded: succeeded, Failed: failed, Skipped: skipped}, summary)
+	return firstErr
+}
+
+func autoProvidersFromCredentials(credentials []core.Credential, cfg config.Config) []string {
+	order := []string{string(core.ProviderAntigravity), string(core.ProviderCodex), string(core.ProviderXAI)}
+	present := map[string]struct{}{}
+	for _, credential := range credentials {
+		p := filterProvider(credential)
+		if p == core.ProviderAntigravity || p == core.ProviderCodex || p == core.ProviderXAI {
+			present[string(p)] = struct{}{}
+		}
+	}
+	selectedFilter := map[string]struct{}{}
+	if cfg.ProviderScope == config.ProviderScopeSelected && len(cfg.SelectedProviders) > 0 {
+		for _, provider := range cfg.SelectedProviders {
+			selectedFilter[provider] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(present))
+	for _, provider := range order {
+		if _, ok := present[provider]; !ok {
+			continue
+		}
+		if len(selectedFilter) > 0 {
+			if _, ok := selectedFilter[provider]; !ok {
+				continue
+			}
+		}
+		result = append(result, provider)
+	}
+	return result
+}
+
+func filterCredentialsToProvider(credentials []core.Credential, provider core.Provider) []core.Credential {
+	filtered := make([]core.Credential, 0, len(credentials))
+	for _, credential := range credentials {
+		if filterProvider(credential) == provider {
+			filtered = append(filtered, credential)
+		}
+	}
+	return filtered
 }
 
 func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) ([]priority.ProbeEvidence, error) {

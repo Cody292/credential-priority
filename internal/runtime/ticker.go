@@ -17,6 +17,9 @@ func (w *tickerWorker) start(rootCtx context.Context, rt *Runtime) {
 	w.cancel = cancel
 	go func() {
 		defer close(w.done)
+		// 启动/reconfigure 后立即跑一轮，避免干等整个 interval。
+		// 若已有手动/自动轮次占用 runMu，则跳过并等下一次 tick。
+		_ = rt.AutoApply(ctx)
 		for {
 			select {
 			case <-w.ticker.Chan():

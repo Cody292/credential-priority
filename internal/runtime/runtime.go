@@ -135,7 +135,7 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata: Metadata{
 			Name:             config.PluginID,
-			Version:          "1.0.9",
+			Version:          "1.0.10",
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
@@ -171,9 +171,9 @@ func (r *Runtime) RunWithProviderScope(ctx context.Context, scope config.Provide
 	return r.run(ctx, TriggerManual, scope, providers, "", nil)
 }
 
-// AutoApply 执行一轮自动任务；若已有任务运行则返回 ErrRunInProgress。
+// AutoApply 执行一轮自动任务；Codex/Antigravity/xAI 在轮次内并行；若已有任务运行则返回 ErrRunInProgress。
 func (r *Runtime) AutoApply(ctx context.Context) error {
-	return r.run(ctx, TriggerAutoApply, "", nil, "", nil)
+	return r.runAuto(ctx, "", nil)
 }
 
 // AutoApplyWithProviders 执行限定 provider 的一轮自动写入任务。
@@ -183,7 +183,31 @@ func (r *Runtime) AutoApplyWithProviders(ctx context.Context, providers []string
 
 // AutoApplyWithProviderScope 执行限定或全部 provider 的一轮自动写入任务。
 func (r *Runtime) AutoApplyWithProviderScope(ctx context.Context, scope config.ProviderScope, providers []string) error {
-	return r.run(ctx, TriggerAutoApply, scope, providers, "", nil)
+	return r.runAuto(ctx, scope, providers)
+}
+
+// runAuto 持有全局 runMu，并在 provider 维度并行执行探测与写回。
+func (r *Runtime) runAuto(ctx context.Context, scope config.ProviderScope, providers []string) error {
+	if !r.runMu.TryLock() {
+		return ErrRunInProgress
+	}
+	defer r.runMu.Unlock()
+	taskCtx, cleanup, cfg, _, err := r.taskContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if scope == config.ProviderScopeAll {
+		cfg.ProviderScope = config.ProviderScopeAll
+		cfg.SelectedProviders = nil
+	} else if len(providers) > 0 {
+		cfg.ProviderScope = config.ProviderScopeSelected
+		cfg.SelectedProviders = append([]string(nil), providers...)
+	}
+	if err := r.runAutoParallelProviders(taskCtx, TaskRequest{Config: cfg, Trigger: TriggerAutoApply}); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("run %s: %w", TriggerAutoApply, err)
+	}
+	return nil
 }
 
 // ManualApplyWithProviderScope 执行管理页手动触发的写入任务。
