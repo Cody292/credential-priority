@@ -28,8 +28,8 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
 
 - 通过宿主回调 `host.auth.list`、`host.auth.get`、`host.auth.get_runtime`、`host.auth.save` 复用 CPA 的凭证、代理和写入链路。
 - 只对本轮最新且可用的探测证据生成排序变更，避免用过期缓存调整凭证状态。
-- 当前仅支持 Antigravity 与 Codex 凭证；后续可扩展其他提供商配置。
-- 不同提供商的排序规则彼此独立，Antigravity 与 Codex 不共享起始优先级或额度耗尽策略。
+- 当前支持 Antigravity、Codex 与 xAI 凭证；后续可扩展其他提供商配置。
+- 不同提供商的排序规则彼此独立，Antigravity、Codex 与 xAI 不共享起始优先级或额度耗尽策略。
 - 状态页、诊断、快照与日志只输出脱敏后的凭证信息。
 
 ## 工作流程
@@ -41,6 +41,7 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
   -> 按 provider_scope / selected_providers 筛选当前支持的提供商
        - Antigravity：按所选模型组探测剩余额度
        - Codex：按账号计划与额度状态探测可用性
+       - xAI：按本轮探测额度信号（免费/周/月）判定可用性
   -> 只使用本轮最新且可用的探测证据生成排序计划
   -> 根据运行模式决定是否写回
        - apply：通过 host.auth.save 写回优先级与启用状态
@@ -112,7 +113,7 @@ plugins:
 | `priority` | CPA 宿主加载与执行插件的顺序，数值越大优先级越高。 |
 | `auto_apply` | 是否由定时器自动执行并写回排序结果，默认 `false`。 |
 | `provider_scope` | `all` 表示处理全部当前支持的提供商；`selected` 表示只处理 `selected_providers`。 |
-| `selected_providers` | 仅支持 `antigravity` 与 `codex`；为空且 `provider_scope: selected` 时会回退为 `all`。 |
+| `selected_providers` | 支持 `antigravity`、`codex` 与 `xai`；为空且 `provider_scope: selected` 时会回退为 `all`。 |
 | `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini` 与 `claude_gpt`。 |
 | `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略。 |
 
@@ -130,6 +131,12 @@ Codex 规则
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
 - `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
 - `priority_rules.codex.paid_depleted_keeps_enabled`：Plus、Pro、Team 额度耗尽时是否保持启用，默认 `true`。
+- `priority_rules.xai.start_priority`：可用凭证的起始优先级，默认 `100`。
+- `priority_rules.xai.free_depleted_priority`：免费额度耗尽时写入的优先级，默认 `-1`。
+- `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否禁用，默认 `true`。
+- `priority_rules.xai.weekly_depleted_priority`：仅周限额耗尽时写入的优先级，默认 `-1`（不禁用）。
+- `priority_rules.xai.monthly_and_weekly_depleted_priority`：周与月均耗尽时写入的优先级，默认 `-1`。
+- `priority_rules.xai.monthly_and_weekly_depleted_disabled`：周与月均耗尽时是否禁用，默认 `true`。
 
 ## 管理页面与接口
 

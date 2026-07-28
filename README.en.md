@@ -22,8 +22,8 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 
 - Reuses CPA credential, proxy, and write-back flows through `host.auth.list`, `host.auth.get`, `host.auth.get_runtime`, and `host.auth.save`.
 - Generates priority changes only from fresh and ready evidence collected in the current run.
-- Currently supports only Antigravity and Codex credentials; additional providers may be added later.
-- Provider rules are independent: Antigravity and Codex do not share start priorities or depletion behavior.
+- Currently supports Antigravity, Codex, and xAI credentials; additional providers may be added later.
+- Provider rules are independent: Antigravity, Codex, and xAI do not share start priorities or depletion behavior.
 - Status pages, diagnostics, snapshots, and logs expose only redacted credential information.
 
 ## Workflow
@@ -35,6 +35,7 @@ Load plugin
   -> Filter currently supported providers by provider_scope / selected_providers
        - Antigravity: probe remaining quota for the selected model group
        - Codex: probe availability by account plan and quota state
+       - xAI: probe free / weekly / monthly quota signals in the current run
   -> Build a sorting plan only from fresh and ready evidence in this run
   -> Decide whether to write back by run mode
        - apply: write priority and enabled state through host.auth.save
@@ -104,7 +105,7 @@ plugins:
 | `priority` | CPA plugin loading and execution order. Higher values run earlier. |
 | `auto_apply` | Enables scheduled execution and write-back. Default: `false`. |
 | `provider_scope` | `all` handles all currently supported providers; `selected` handles only `selected_providers`. |
-| `selected_providers` | Supports only `antigravity` and `codex`. Empty selected scope falls back to `all`. |
+| `selected_providers` | Supports `antigravity`, `codex`, and `xai`. Empty selected scope falls back to `all`. |
 | `antigravity_model_group` | Antigravity quota group: `gemini` or `claude_gpt`. |
 | `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. |
 
@@ -122,6 +123,12 @@ Codex rules
 - `priority_rules.codex.free_depleted_priority`: priority for depleted Free credentials. Default: `-1`.
 - `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
 - `priority_rules.codex.paid_depleted_keeps_enabled`: keeps Plus, Pro, and Team credentials enabled when depleted. Default: `true`.
+- `priority_rules.xai.start_priority`: start priority for available credentials. Default: `100`.
+- `priority_rules.xai.free_depleted_priority`: priority for free usage depleted. Default: `-1`.
+- `priority_rules.xai.free_depleted_disabled`: disables free usage depleted credentials. Default: `true`.
+- `priority_rules.xai.weekly_depleted_priority`: priority when only weekly limit is depleted. Default: `-1` (not disabled).
+- `priority_rules.xai.monthly_and_weekly_depleted_priority`: priority when monthly and weekly are depleted. Default: `-1`.
+- `priority_rules.xai.monthly_and_weekly_depleted_disabled`: disables when monthly and weekly are depleted. Default: `true`.
 
 ## Management Page and API
 

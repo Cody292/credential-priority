@@ -4,9 +4,9 @@
     {
       "id": "credential-priority",
       "name": "Credential Priority",
-      "description": "Automatically sorts Antigravity and Codex credentials by fresh quota evidence.",
+      "description": "Automatically sorts Antigravity, Codex, and xAI credentials by fresh quota evidence.",
       "author": "Cody292",
-      "version": "1.0.7",
+      "version": "1.0.9",
       "repository": "https://github.com/Cody292/credential-priority",
       "homepage": "https://github.com/Cody292/credential-priority",
       "license": "MIT",
