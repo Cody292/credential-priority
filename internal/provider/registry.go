@@ -38,6 +38,7 @@ func NewRegistry() Registry {
 			core.ProviderCodex:       probeStrategy{provider: core.ProviderCodex, nameText: core.StrategyCodex},
 			core.ProviderChatGPT:     probeStrategy{provider: core.ProviderChatGPT, nameText: core.StrategyChatGPT},
 			core.ProviderAntigravity: probeStrategy{provider: core.ProviderAntigravity, nameText: core.StrategyAntigravity},
+			core.ProviderXAI:         probeStrategy{provider: core.ProviderXAI, nameText: core.StrategyXAI},
 			core.ProviderManual:      manualStrategy{provider: core.ProviderManual},
 		},
 		manual: manualStrategy{provider: core.ProviderUnknown},
@@ -102,6 +103,8 @@ func normalizeProvider(value string) core.Provider {
 		return core.ProviderGemini
 	case "openai":
 		return core.ProviderOpenAI
+	case "xai", "x-ai":
+		return core.ProviderXAI
 	default:
 		return core.ProviderUnknown
 	}
@@ -117,6 +120,8 @@ func normalizeCredentialType(value string) core.Provider {
 		return core.ProviderChatGPT
 	case "manual":
 		return core.ProviderManual
+	case "xai", "x-ai":
+		return core.ProviderXAI
 	default:
 		return core.ProviderUnknown
 	}

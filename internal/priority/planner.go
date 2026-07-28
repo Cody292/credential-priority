@@ -16,6 +16,11 @@ type Options struct {
 	CodexFreeDepletedPriority     *int
 	CodexFreeDepletedDisabled     *bool
 	CodexPaidDepletedKeepsEnabled *bool
+	XAIFreeDepletedPriority              *int
+	XAIFreeDepletedDisabled              *bool
+	XAIWeeklyDepletedPriority            *int
+	XAIMonthlyAndWeeklyDepletedPriority  *int
+	XAIMonthlyAndWeeklyDepletedDisabled  *bool
 	MinChange                     int
 	PaidFirst                     bool
 	ResetBoostWithin              time.Duration
@@ -35,6 +40,10 @@ type ProbeEvidence struct {
 	Status            EvidenceStatus
 	PlanType          core.PlanType
 	EvidenceFresh     bool
+	// XAIDepletedKind: free | weekly | monthly_and_weekly；空表示非 xAI 耗尽语义。
+	XAIDepletedKind string
+	// QuotaKnown 仅 xAI：false 时禁止驱动 priority/disabled 变更。
+	QuotaKnown bool
 }
 
 // EvidenceStatus 标识本轮 probe evidence 对规划器是否可用。
@@ -63,7 +72,9 @@ type PlanItem struct {
 	Remaining         *int64
 	LongWindowResetAt *time.Time
 	EvidenceFresh     bool
-	Reason            string
+	// ForceWrite 允许无本轮 fresh 证据的同伴因同 provider 优先级去重而写回宿主。
+	ForceWrite bool
+	Reason     string
 }
 
 // Change 表示需要由后续 apply writer 写回宿主的 fresh 证据变更。
@@ -86,6 +97,9 @@ func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, opti
 	evidenceByAuthIndex := freshEvidenceByAuthIndex(evidence)
 	items := initialItems(credentials, evidenceByAuthIndex, options)
 	planFreshPositive(items, options)
+	// 局部探测只会给少数凭证 fresh 证据；若只写 start_priority，会与同伴历史优先级重叠。
+	// 同 provider 启用态正优先级必须在本轮规划结果中唯一，必要时改写无 fresh 同伴并 ForceWrite。
+	ensureUniqueProviderPriorities(items, options)
 	sortPlanItems(items)
 	return Plan{Items: items, Changes: changes(items, options)}
 }
@@ -137,6 +151,34 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.Priority = codexFreeDepletedPriority(options)
 				item.Disabled = credential.Disabled || !codexPaidDepletedKeepsEnabled(options)
 				item.Reason = "fresh paid remaining depleted"
+			} else if isXAIFreeDepleted(credential, evidence) {
+				item.PlanType = evidence.PlanType
+				item.ResetAt = evidence.ResetAt
+				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
+				item.EvidenceFresh = true
+				item.Priority = xaiFreeDepletedPriority(options)
+				item.Disabled = credential.Disabled || xaiFreeDepletedDisabled(options)
+				item.Reason = "fresh remaining depleted"
+			} else if isXAIMonthlyAndWeeklyDepleted(credential, evidence) {
+				item.PlanType = evidence.PlanType
+				item.ResetAt = evidence.ResetAt
+				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
+				item.EvidenceFresh = true
+				item.Priority = xaiMonthlyAndWeeklyDepletedPriority(options)
+				item.Disabled = credential.Disabled || xaiMonthlyAndWeeklyDepletedDisabled(options)
+				item.Reason = "fresh monthly and weekly depleted"
+			} else if isXAIWeeklyDepleted(credential, evidence) {
+				item.PlanType = evidence.PlanType
+				item.ResetAt = evidence.ResetAt
+				item.Remaining = evidence.Remaining
+				item.LongWindowResetAt = evidence.LongWindowResetAt
+				item.EvidenceFresh = true
+				item.Priority = xaiWeeklyDepletedPriority(options)
+				// 仅周限额耗尽：降优先级，不禁用。
+				item.Disabled = credential.Disabled
+				item.Reason = "fresh weekly depleted"
 			} else if isAntigravityWeeklyDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
 				item.ResetAt = evidence.ResetAt
@@ -212,6 +254,58 @@ func codexPaidDepletedKeepsEnabled(options Options) bool {
 	return *options.CodexPaidDepletedKeepsEnabled
 }
 
+func isXAICredential(credential core.Credential) bool {
+	return planItemProvider(PlanItem{Credential: credential}) == core.ProviderXAI
+}
+
+func isXAIFreeDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return isXAICredential(credential) &&
+		(evidence.XAIDepletedKind == "free" || (evidence.PlanType == core.PlanTypeFree && evidence.Remaining != nil && *evidence.Remaining <= 0 && evidence.XAIDepletedKind == ""))
+}
+
+func isXAIWeeklyDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return isXAICredential(credential) && evidence.XAIDepletedKind == "weekly"
+}
+
+func isXAIMonthlyAndWeeklyDepleted(credential core.Credential, evidence ProbeEvidence) bool {
+	return isXAICredential(credential) && evidence.XAIDepletedKind == "monthly_and_weekly"
+}
+
+func xaiFreeDepletedPriority(options Options) int {
+	if options.XAIFreeDepletedPriority == nil {
+		return -1
+	}
+	return *options.XAIFreeDepletedPriority
+}
+
+func xaiFreeDepletedDisabled(options Options) bool {
+	if options.XAIFreeDepletedDisabled == nil {
+		return true
+	}
+	return *options.XAIFreeDepletedDisabled
+}
+
+func xaiWeeklyDepletedPriority(options Options) int {
+	if options.XAIWeeklyDepletedPriority == nil {
+		return -1
+	}
+	return *options.XAIWeeklyDepletedPriority
+}
+
+func xaiMonthlyAndWeeklyDepletedPriority(options Options) int {
+	if options.XAIMonthlyAndWeeklyDepletedPriority == nil {
+		return -1
+	}
+	return *options.XAIMonthlyAndWeeklyDepletedPriority
+}
+
+func xaiMonthlyAndWeeklyDepletedDisabled(options Options) bool {
+	if options.XAIMonthlyAndWeeklyDepletedDisabled == nil {
+		return true
+	}
+	return *options.XAIMonthlyAndWeeklyDepletedDisabled
+}
+
 func planFreshPositive(items []PlanItem, options Options) {
 	candidates := positiveCandidates(items, options)
 	for _, group := range providerCandidateGroups(items, candidates) {
@@ -230,6 +324,114 @@ func planFreshPositive(items []PlanItem, options Options) {
 			}
 		}
 	}
+}
+
+// ensureUniqueProviderPriorities 保证同 provider 启用态 priority>=1 的槽位唯一。
+// 参与者包括：本轮 fresh 正额度、以及仍占用正优先级的无 fresh 同伴（历史局部写回残留）。
+// 不改写 disabled 或 priority<=0（含 depleted -1）的凭证。
+func ensureUniqueProviderPriorities(items []PlanItem, options Options) {
+	order := make([]core.Provider, 0)
+	seen := make(map[core.Provider]struct{})
+	groups := make(map[core.Provider][]int)
+	for index, item := range items {
+		if item.Disabled || item.Priority < 1 {
+			continue
+		}
+		// 仅当本轮至少有一条同 provider 的 fresh 正额度证据时，才触发去重写回，
+		// 避免无探测的空跑改写全站优先级。
+		provider := planItemProvider(item)
+		if _, ok := seen[provider]; !ok {
+			seen[provider] = struct{}{}
+			order = append(order, provider)
+		}
+		groups[provider] = append(groups[provider], index)
+	}
+	for _, provider := range order {
+		group := groups[provider]
+		if !providerGroupHasFreshPositive(items, group) {
+			continue
+		}
+		if !providerGroupHasPriorityCollision(items, group) && !providerGroupNeedsStartRealign(items, group, options) {
+			// 无碰撞且已从 start 对齐时仍可能因局部写回导致「全员 start」；
+			// providerGroupHasPriorityCollision 已覆盖重复值；此处保留 full re-pack 仅在有碰撞时。
+			continue
+		}
+		slices.SortStableFunc(group, func(left int, right int) int {
+			return compareUniquenessCandidates(items[left], items[right], options)
+		})
+		priority := startPriorityForProvider(provider, options)
+		for _, itemIndex := range group {
+			// resetBoost 999 仅保留给有 fresh 的 boost 项；无 fresh 同伴不得继承 999。
+			nextPriority := priority
+			if items[itemIndex].EvidenceFresh {
+				nextPriority = plannedPriority(items[itemIndex], priority, options)
+			}
+			if items[itemIndex].Priority != nextPriority {
+				if !items[itemIndex].EvidenceFresh {
+					items[itemIndex].ForceWrite = true
+					items[itemIndex].Reason = "provider priority uniqueness"
+				} else if items[itemIndex].Reason == "keep current state" || items[itemIndex].Reason == "" {
+					items[itemIndex].Reason = "provider priority uniqueness"
+				}
+				items[itemIndex].Priority = nextPriority
+			}
+			priority--
+			if priority < 1 {
+				priority = 1
+			}
+		}
+	}
+}
+
+func providerGroupHasFreshPositive(items []PlanItem, group []int) bool {
+	for _, index := range group {
+		item := items[index]
+		if item.EvidenceFresh && item.Remaining != nil && *item.Remaining > 0 {
+			return true
+		}
+		if item.EvidenceFresh && item.Reason == "fresh remaining positive" {
+			return true
+		}
+	}
+	return false
+}
+
+func providerGroupHasPriorityCollision(items []PlanItem, group []int) bool {
+	seen := make(map[int]struct{}, len(group))
+	for _, index := range group {
+		priority := items[index].Priority
+		if _, ok := seen[priority]; ok {
+			return true
+		}
+		seen[priority] = struct{}{}
+	}
+	return false
+}
+
+func providerGroupNeedsStartRealign(items []PlanItem, group []int, options Options) bool {
+	// 预留：当前仅在碰撞时 re-pack；保留钩子便于后续策略扩展。
+	_ = options
+	_ = items
+	_ = group
+	return false
+}
+
+func compareUniquenessCandidates(left PlanItem, right PlanItem, options Options) int {
+	leftFreshPositive := left.EvidenceFresh && left.Remaining != nil && *left.Remaining > 0
+	rightFreshPositive := right.EvidenceFresh && right.Remaining != nil && *right.Remaining > 0
+	switch {
+	case leftFreshPositive && rightFreshPositive:
+		return compareCandidates(left, right, options)
+	case leftFreshPositive:
+		return -1
+	case rightFreshPositive:
+		return 1
+	}
+	// 无 fresh 同伴：较高现有优先级在前，其次 AuthIndex，保证稳定可复现。
+	if left.Priority != right.Priority {
+		return right.Priority - left.Priority
+	}
+	return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
 }
 
 func providerCandidateGroups(items []PlanItem, candidates []int) [][]int {
@@ -260,6 +462,8 @@ func planItemProvider(item PlanItem) core.Provider {
 		return core.ProviderCodex
 	case core.CredentialTypeAntigravity:
 		return core.ProviderAntigravity
+	case core.CredentialTypeXAI:
+		return core.ProviderXAI
 	default:
 		return core.ProviderUnknown
 	}
@@ -288,6 +492,19 @@ func positiveCandidates(items []PlanItem, options Options) []int {
 }
 
 func compareCandidates(left PlanItem, right PlanItem, options Options) int {
+	// xAI：禁止套餐名序；优先剩余额度，其次重置时间，再 AuthIndex 破同分。
+	if planItemProvider(left) == core.ProviderXAI || planItemProvider(right) == core.ProviderXAI {
+		if left.Remaining != nil && right.Remaining != nil && *left.Remaining != *right.Remaining {
+			if *left.Remaining > *right.Remaining {
+				return -1
+			}
+			return 1
+		}
+		if result := compareResetAt(left.ResetAt, right.ResetAt); result != 0 {
+			return result
+		}
+		return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
+	}
 	if options.PaidFirst && paidRank(left.PlanType) != paidRank(right.PlanType) {
 		return paidRank(right.PlanType) - paidRank(left.PlanType)
 	}
@@ -364,10 +581,11 @@ func changes(items []PlanItem, options Options) []Change {
 	for _, item := range items {
 		if shouldChange(item, options) {
 			result = append(result, Change{
-				Credential:    item.Credential,
-				Priority:      item.Priority,
-				Disabled:      item.Disabled,
-				EvidenceFresh: item.EvidenceFresh,
+				Credential: item.Credential,
+				Priority:   item.Priority,
+				Disabled:   item.Disabled,
+				// ForceWrite 同伴无本轮 probe，但必须通过 apply 的 EvidenceFresh 写入门闸。
+				EvidenceFresh: item.EvidenceFresh || item.ForceWrite,
 				Reason:        item.Reason,
 			})
 		}
@@ -376,8 +594,17 @@ func changes(items []PlanItem, options Options) []Change {
 }
 
 func shouldChange(item PlanItem, options Options) bool {
-	if !item.EvidenceFresh {
+	// ForceWrite：同 provider 优先级去重改写无 fresh 同伴时必须写回宿主。
+	if !item.EvidenceFresh && !item.ForceWrite {
 		return false
+	}
+	if item.ForceWrite && !item.EvidenceFresh {
+		if item.Priority == item.Credential.Priority && item.Disabled == item.Credential.Disabled {
+			return false
+		}
+		return abs(item.Priority-item.Credential.Priority) >= normalizedMinChange(options.MinChange) ||
+			item.Disabled != item.Credential.Disabled ||
+			item.Credential.PriorityMissing
 	}
 	if item.Credential.PriorityMissing {
 		return true

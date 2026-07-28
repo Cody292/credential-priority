@@ -137,6 +137,10 @@ func probeFailureDisableChanges(plan priority.Plan, evidence []priority.ProbeEvi
 	failures := make(map[string]priority.ProbeEvidence)
 	for _, item := range evidence {
 		if item.Status == priority.EvidenceStatusProbeFailed {
+			// xAI：无可信额度信号时必须保持现状，禁止因 probe_failed 临时禁用。
+			if item.Provider == core.ProviderXAI {
+				continue
+			}
 			failures[item.AuthIndex] = item
 		}
 	}
@@ -150,6 +154,9 @@ func probeFailureDisableChanges(plan priority.Plan, evidence []priority.ProbeEvi
 			continue
 		}
 		if item.Credential.Disabled {
+			continue
+		}
+		if filterProvider(item.Credential) == core.ProviderXAI {
 			continue
 		}
 		credential := item.Credential
@@ -256,7 +263,7 @@ func filterCredentialsByProvider(credentials []core.Credential, cfg config.Confi
 		filtered := make([]core.Credential, 0, len(credentials))
 		for _, credential := range credentials {
 			p := filterProvider(credential)
-			if p == core.ProviderAntigravity || p == core.ProviderCodex {
+			if p == core.ProviderAntigravity || p == core.ProviderCodex || p == core.ProviderXAI {
 				filtered = append(filtered, credential)
 			}
 		}
@@ -284,6 +291,8 @@ func filterProvider(credential core.Credential) core.Provider {
 		return core.ProviderCodex
 	case core.CredentialTypeAntigravity:
 		return core.ProviderAntigravity
+	case core.CredentialTypeXAI:
+		return core.ProviderXAI
 	default:
 		return core.ProviderUnknown
 	}
@@ -309,13 +318,24 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
 		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled
 		paidDepletedKeepsEnabled := cfg.PriorityRules.Codex.PaidDepletedKeepsEnabled
+		xaiFreePriority := cfg.PriorityRules.XAI.FreeDepletedPriority
+		xaiFreeDisabled := cfg.PriorityRules.XAI.FreeDepletedDisabled
+		xaiWeeklyPriority := cfg.PriorityRules.XAI.WeeklyDepletedPriority
+		xaiMonthlyWeeklyPriority := cfg.PriorityRules.XAI.MonthlyAndWeeklyDepletedPriority
+		xaiMonthlyWeeklyDisabled := cfg.PriorityRules.XAI.MonthlyAndWeeklyDepletedDisabled
 		options.StartPriorityByProvider = map[core.Provider]int{
 			core.ProviderAntigravity: cfg.PriorityRules.Antigravity.StartPriority,
 			core.ProviderCodex:       cfg.PriorityRules.Codex.StartPriority,
+			core.ProviderXAI:         cfg.PriorityRules.XAI.StartPriority,
 		}
 		options.CodexFreeDepletedPriority = &freeDepletedPriority
 		options.CodexFreeDepletedDisabled = &freeDepletedDisabled
 		options.CodexPaidDepletedKeepsEnabled = &paidDepletedKeepsEnabled
+		options.XAIFreeDepletedPriority = &xaiFreePriority
+		options.XAIFreeDepletedDisabled = &xaiFreeDisabled
+		options.XAIWeeklyDepletedPriority = &xaiWeeklyPriority
+		options.XAIMonthlyAndWeeklyDepletedPriority = &xaiMonthlyWeeklyPriority
+		options.XAIMonthlyAndWeeklyDepletedDisabled = &xaiMonthlyWeeklyDisabled
 	}
 	return options
 }

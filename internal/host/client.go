@@ -128,6 +128,18 @@ func (c *Client) authDocumentByName(ctx context.Context, name string) (AuthDocum
 
 // HTTPDo 通过 host.http.do 发送外部请求并拒绝非 2xx 响应。
 func (c *Client) HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error) {
+	resp, err := c.HTTPDoRaw(ctx, req)
+	if err != nil {
+		return HTTPResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return resp, fmt.Errorf("host.http.do %s %s: %w", req.Method, redactURL(req.URL), &HTTPStatusError{StatusCode: resp.StatusCode, Body: RedactBytes(resp.Body)})
+	}
+	return resp, nil
+}
+
+// HTTPDoRaw 通过 host.http.do 发送外部请求，保留非 2xx 响应体供额度错误解析（如 xAI 429）。
+func (c *Client) HTTPDoRaw(ctx context.Context, req HTTPRequest) (HTTPResponse, error) {
 	method := strings.TrimSpace(req.Method)
 	if method == "" || strings.TrimSpace(req.URL) == "" {
 		return HTTPResponse{}, fmt.Errorf("%w: method and url are required", ErrInvalidRequest)
@@ -136,9 +148,6 @@ func (c *Client) HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, err
 	resp, err := c.callbacks.HTTPDo(ctx, req)
 	if err != nil {
 		return HTTPResponse{}, fmt.Errorf("host.http.do %s %s: %w", method, redactURL(req.URL), err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return resp, fmt.Errorf("host.http.do %s %s: %w", method, redactURL(req.URL), &HTTPStatusError{StatusCode: resp.StatusCode, Body: RedactBytes(resp.Body)})
 	}
 	return resp, nil
 }

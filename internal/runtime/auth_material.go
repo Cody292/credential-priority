@@ -16,6 +16,7 @@ type authMaterial struct {
 	accessToken string
 	accountID   string
 	projectID   string
+	baseURL     string
 }
 
 func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client, credentials []core.Credential) ([]core.Credential, map[string]authMaterial, error) {
@@ -32,7 +33,7 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON), accountIDFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
 		}
-		materials[credential.AuthIndex] = authMaterial{accessToken: accessTokenFromJSON(rawJSON), accountID: accountIDFromJSON(rawJSON), projectID: projectIDFromJSON(rawJSON)}
+		materials[credential.AuthIndex] = authMaterial{accessToken: accessTokenFromJSON(rawJSON), accountID: accountIDFromJSON(rawJSON), projectID: projectIDFromJSON(rawJSON), baseURL: baseURLFromJSON(rawJSON)}
 	}
 	return enriched, materials, nil
 }
@@ -129,4 +130,14 @@ func topLevelFieldMissing(raw json.RawMessage, field string) bool {
 	}
 	_, ok := object[field]
 	return !ok
+}
+
+func baseURLFromJSON(raw json.RawMessage) string {
+	var document struct {
+		BaseURL string `json:"base_url"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(document.BaseURL)
 }

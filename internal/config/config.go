@@ -58,6 +58,7 @@ type PriorityRules struct {
 	Enabled     bool
 	Antigravity AntigravityPriorityRules
 	Codex       CodexPriorityRules
+	XAI         XAIPriorityRules
 }
 
 // AntigravityPriorityRules 是 Antigravity 排序规则的可配置部分。
@@ -71,6 +72,16 @@ type CodexPriorityRules struct {
 	FreeDepletedPriority     int
 	FreeDepletedDisabled     bool
 	PaidDepletedKeepsEnabled bool
+}
+
+// XAIPriorityRules 是 xAI 排序规则的可配置部分。
+type XAIPriorityRules struct {
+	StartPriority                       int
+	FreeDepletedPriority                int
+	FreeDepletedDisabled                bool
+	WeeklyDepletedPriority              int
+	MonthlyAndWeeklyDepletedPriority    int
+	MonthlyAndWeeklyDepletedDisabled    bool
 }
 
 type rawConfig struct {
@@ -103,6 +114,7 @@ type rawPriorityRules struct {
 	Enabled     *bool                   `json:"enabled"`
 	Antigravity *rawAntigravityPriority `json:"antigravity"`
 	Codex       *rawCodexPriority       `json:"codex"`
+	XAI         *rawXAIPriority         `json:"xai"`
 	Unsupported map[string]json.RawMessage
 }
 
@@ -115,6 +127,15 @@ type rawCodexPriority struct {
 	FreeDepletedPriority     *int  `json:"free_depleted_priority"`
 	FreeDepletedDisabled     *bool `json:"free_depleted_disabled"`
 	PaidDepletedKeepsEnabled *bool `json:"paid_depleted_keeps_enabled"`
+}
+
+type rawXAIPriority struct {
+	StartPriority                    *int  `json:"start_priority"`
+	FreeDepletedPriority             *int  `json:"free_depleted_priority"`
+	FreeDepletedDisabled             *bool `json:"free_depleted_disabled"`
+	WeeklyDepletedPriority           *int  `json:"weekly_depleted_priority"`
+	MonthlyAndWeeklyDepletedPriority *int  `json:"monthly_and_weekly_depleted_priority"`
+	MonthlyAndWeeklyDepletedDisabled *bool `json:"monthly_and_weekly_depleted_disabled"`
 }
 
 func (raw *rawPriorityRules) UnmarshalJSON(data []byte) error {
@@ -151,7 +172,7 @@ func (raw *rawPriorityRules) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(trimmed, &fields); err != nil {
 		return err
 	}
-	for _, allowed := range []string{"enabled", "antigravity", "codex"} {
+	for _, allowed := range []string{"enabled", "antigravity", "codex", "xai"} {
 		delete(fields, allowed)
 	}
 	*raw = rawPriorityRules(decoded)
@@ -240,6 +261,14 @@ func defaultPriorityRules() PriorityRules {
 			FreeDepletedPriority:     -1,
 			FreeDepletedDisabled:     true,
 			PaidDepletedKeepsEnabled: true,
+		},
+		XAI: XAIPriorityRules{
+			StartPriority:                    100,
+			FreeDepletedPriority:             -1,
+			FreeDepletedDisabled:             true,
+			WeeklyDepletedPriority:           -1,
+			MonthlyAndWeeklyDepletedPriority: -1,
+			MonthlyAndWeeklyDepletedDisabled: true,
 		},
 	}
 }
@@ -371,7 +400,7 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 
 func (raw rawPriorityRules) apply(rules PriorityRules) (PriorityRules, error) {
 	for provider := range raw.Unsupported {
-		return PriorityRules{}, invalid("priority_rules."+provider, provider, "only antigravity and codex are supported")
+		return PriorityRules{}, invalid("priority_rules."+provider, provider, "only antigravity, codex and xai are supported")
 	}
 	if raw.Enabled != nil {
 		rules.Enabled = *raw.Enabled
@@ -389,6 +418,13 @@ func (raw rawPriorityRules) apply(rules PriorityRules) (PriorityRules, error) {
 			return PriorityRules{}, err
 		}
 		rules.Codex = updated
+	}
+	if raw.XAI != nil {
+		updated, err := raw.XAI.apply(rules.XAI)
+		if err != nil {
+			return PriorityRules{}, err
+		}
+		rules.XAI = updated
 	}
 	return rules, nil
 }
@@ -418,6 +454,31 @@ func (raw rawCodexPriority) apply(rule CodexPriorityRules) (CodexPriorityRules, 
 	}
 	if rule.StartPriority < 1 {
 		return CodexPriorityRules{}, invalid("priority_rules.codex.start_priority", fmt.Sprint(rule.StartPriority), "must be at least 1")
+	}
+	return rule, nil
+}
+
+func (raw rawXAIPriority) apply(rule XAIPriorityRules) (XAIPriorityRules, error) {
+	if raw.StartPriority != nil {
+		rule.StartPriority = *raw.StartPriority
+	}
+	if raw.FreeDepletedPriority != nil {
+		rule.FreeDepletedPriority = *raw.FreeDepletedPriority
+	}
+	if raw.FreeDepletedDisabled != nil {
+		rule.FreeDepletedDisabled = *raw.FreeDepletedDisabled
+	}
+	if raw.WeeklyDepletedPriority != nil {
+		rule.WeeklyDepletedPriority = *raw.WeeklyDepletedPriority
+	}
+	if raw.MonthlyAndWeeklyDepletedPriority != nil {
+		rule.MonthlyAndWeeklyDepletedPriority = *raw.MonthlyAndWeeklyDepletedPriority
+	}
+	if raw.MonthlyAndWeeklyDepletedDisabled != nil {
+		rule.MonthlyAndWeeklyDepletedDisabled = *raw.MonthlyAndWeeklyDepletedDisabled
+	}
+	if rule.StartPriority < 1 {
+		return XAIPriorityRules{}, invalid("priority_rules.xai.start_priority", fmt.Sprint(rule.StartPriority), "must be at least 1")
 	}
 	return rule, nil
 }

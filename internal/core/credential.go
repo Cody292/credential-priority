@@ -20,6 +20,8 @@ const (
 	ProviderGemini Provider = "gemini"
 	// ProviderOpenAI 表示 OpenAI provider，首版仅用于识别为不支持。
 	ProviderOpenAI Provider = "openai"
+	// ProviderXAI 表示 xAI / Grok provider。
+	ProviderXAI Provider = "xai"
 )
 
 // CredentialType 标识宿主 auth-file 的 type 字段。
@@ -40,6 +42,8 @@ const (
 	CredentialTypeGemini CredentialType = "gemini"
 	// CredentialTypeOpenAI 表示 OpenAI 凭证类型，首版不参与排序。
 	CredentialTypeOpenAI CredentialType = "openai"
+	// CredentialTypeXAI 表示 xAI 凭证类型。
+	CredentialTypeXAI CredentialType = "xai"
 )
 
 // CredentialStatus 标识宿主侧凭证状态。
@@ -116,6 +120,8 @@ const (
 	StrategyChatGPT StrategyName = "chatgpt"
 	// StrategyAntigravity 表示 Antigravity detector/strategy。
 	StrategyAntigravity StrategyName = "antigravity"
+	// StrategyXAI 表示 xAI detector/strategy。
+	StrategyXAI StrategyName = "xai"
 )
 
 // Credential 是 host auth-file 的排序领域模型快照。

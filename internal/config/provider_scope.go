@@ -32,8 +32,8 @@ func NormalizeSelectedProviders(values []string) ([]string, error) {
 		if provider == "" {
 			continue
 		}
-		if provider != "antigravity" && provider != "codex" {
-			return nil, invalid("selected_providers", value, "only antigravity and codex are supported")
+		if provider != "antigravity" && provider != "codex" && provider != "xai" {
+			return nil, invalid("selected_providers", value, "only antigravity, codex and xai are supported")
 		}
 		if _, ok := seen[provider]; ok {
 			continue

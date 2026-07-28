@@ -12,6 +12,7 @@ import (
 	"credential-priority/internal/provider"
 	"credential-priority/internal/provider/antigravity"
 	"credential-priority/internal/provider/codex"
+	"credential-priority/internal/provider/xai"
 	"credential-priority/internal/schedule"
 	"credential-priority/internal/state"
 )
@@ -30,7 +31,7 @@ type collectInput struct {
 
 func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.ProbeEvidence, error) {
 	registry := provider.NewRegistry()
-	probers := probeSet{codex: codex.NewProber(input.client, fixedClock{now: input.now}), antigravity: antigravity.NewProber(input.client, fixedClock{now: input.now})}
+	probers := probeSet{codex: codex.NewProber(input.client, fixedClock{now: input.now}), antigravity: antigravity.NewProber(input.client, fixedClock{now: input.now}), xai: xai.NewProber(input.client, fixedClock{now: input.now})}
 	evidence := make([]priority.ProbeEvidence, 0, len(input.probes))
 	for _, probe := range input.probes {
 		registryResult := registry.Evaluate(probe.Credential)
@@ -56,7 +57,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.P
 }
 
 func probeStrategySupported(strategy core.StrategyName) bool {
-	return strategy == core.StrategyCodex || strategy == core.StrategyChatGPT || strategy == core.StrategyAntigravity
+	return strategy == core.StrategyCodex || strategy == core.StrategyChatGPT || strategy == core.StrategyAntigravity || strategy == core.StrategyXAI
 }
 
 func freshProbeNeeded(ctx context.Context, input collectInput, authIndex string, provider core.Provider, modelGroup string) (bool, error) {
@@ -76,6 +77,7 @@ func probeModelGroup(provider core.Provider, modelGroup config.AntigravityModelG
 type probeSet struct {
 	codex       codex.Prober
 	antigravity antigravity.Prober
+	xai         xai.Prober
 }
 
 type probeAndRecordInput struct {
@@ -93,6 +95,10 @@ func (p probeSet) probeAndRecord(ctx context.Context, input probeAndRecordInput)
 	if input.strategy == core.StrategyAntigravity {
 		result := p.antigravity.Probe(ctx, antigravity.ProbeRequest{AuthIndex: input.credential.AuthIndex, AccessToken: input.authMaterial.accessToken, ProjectID: input.authMaterial.projectID, ModelGroup: input.antigravityModelGroup})
 		return recordAntigravityProbeResult(ctx, input.store, result, input.now)
+	}
+	if input.strategy == core.StrategyXAI {
+		result := p.xai.Probe(ctx, xai.ProbeRequest{AuthIndex: input.credential.AuthIndex, AccessToken: input.authMaterial.accessToken, BaseURL: input.authMaterial.baseURL})
+		return recordXAIProbeResult(ctx, input.store, result, input.now)
 	}
 	accountID := input.accountID
 	if accountID == "" {
@@ -118,4 +124,27 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 	}
 	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{AuthIndex: result.AuthIndex, Provider: core.ProviderAntigravity, ModelGroup: string(result.ModelGroup), ObservedAt: result.ObservedAt, ResetAt: *result.ResetAt, Remaining: int(*result.Remaining), Source: state.SourceFreshProbe, NextProbeAt: result.ObservedAt.Add(time.Hour)})
 	return priority.ProbeEvidence{Provider: core.ProviderAntigravity, AuthIndex: result.AuthIndex, ObservedAt: result.ObservedAt, ResetAt: result.ResetAt, Remaining: result.Remaining, LongWindowResetAt: result.LongWindowResetAt, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusReady, PlanType: result.PlanType, EvidenceFresh: true}, err
+}
+
+func recordXAIProbeResult(ctx context.Context, store *state.Store, result xai.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
+	if result.Status != xai.StatusReady || !result.QuotaKnown || result.ResetAt == nil || result.Remaining == nil {
+		err := store.MarkProbeFailure(ctx, state.ProbeFailure{AuthIndex: result.AuthIndex, Provider: core.ProviderXAI, ObservedAt: now, Err: errors.New(result.Error), NextProbeAt: now.Add(time.Hour)})
+		return priority.ProbeEvidence{Provider: core.ProviderXAI, AuthIndex: result.AuthIndex, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusProbeFailed, QuotaKnown: false}, err
+	}
+	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{AuthIndex: result.AuthIndex, Provider: core.ProviderXAI, ObservedAt: result.ObservedAt, ResetAt: *result.ResetAt, Remaining: int(*result.Remaining), Source: state.SourceFreshProbe, NextProbeAt: result.ObservedAt.Add(time.Hour)})
+	return priority.ProbeEvidence{
+		Provider:          core.ProviderXAI,
+		AuthIndex:         result.AuthIndex,
+		ObservedAt:        result.ObservedAt,
+		ResetAt:           result.ResetAt,
+		Remaining:         result.Remaining,
+		LongWindowResetAt: result.LongWindowResetAt,
+		Freshness:         result.Freshness,
+		ProbeStatus:       result.ProbeStatus,
+		Status:            priority.EvidenceStatusReady,
+		PlanType:          result.PlanType,
+		EvidenceFresh:     true,
+		XAIDepletedKind:   string(result.DepletedKind),
+		QuotaKnown:        true,
+	}, err
 }
