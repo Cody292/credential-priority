@@ -237,7 +237,7 @@ func Default() Config {
 		AntigravityModelGroup: AntigravityModelGroupGemini,
 		Interval:              15 * time.Minute,
 		ImmediateProbeLimit:   30,
-		MaxConcurrency:        2,
+		MaxConcurrency:        6,
 		MinChange:             1,
 		TopPriorityProbeCount: 10,
 		ActiveGroupSize:       10,
