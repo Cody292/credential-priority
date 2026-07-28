@@ -83,7 +83,7 @@ type probeAttempt struct {
 
 func probeModels(preferred string) []string {
 	preferred = strings.TrimSpace(preferred)
-	out := make([]string, 0, 5)
+	out := make([]string, 0, 2)
 	seen := map[string]struct{}{}
 	add := func(m string) {
 		m = strings.TrimSpace(m)
@@ -96,22 +96,19 @@ func probeModels(preferred string) []string {
 		seen[m] = struct{}{}
 		out = append(out, m)
 	}
+	// 收敛探测：默认非推理模型 + free 模型（用于 free-usage 信号）；避免多模型串行拖垮整轮自动排序。
 	add(preferred)
 	add(DefaultProbeModel)
-	add("grok-4.5-build-free")
-	add("grok-4.20-0309-reasoning")
+	if DefaultProbeModel != "grok-4.5-build-free" {
+		add("grok-4.5-build-free")
+	}
 	return out
 }
 
 func probeAttempts(baseURL, model string) []probeAttempt {
-	responsesBody, _ := json.Marshal(map[string]any{
-		"model":             model,
-		"input":             "ping",
-		"stream":            false,
-		"max_output_tokens": 1,
-	})
-	attempts := []probeAttempt{{url: baseURL + "/responses", body: responsesBody}}
-	// multi-agent 模型不支持 chat completions。
+	// OAuth api.x.ai 上 chat/completions 更轻量；仅失败再试 /responses。
+	// multi-agent 模型跳过 chat completions。
+	attempts := make([]probeAttempt, 0, 2)
 	if !strings.Contains(strings.ToLower(model), "multi-agent") {
 		chatBody, _ := json.Marshal(map[string]any{
 			"model":      model,
@@ -121,6 +118,13 @@ func probeAttempts(baseURL, model string) []probeAttempt {
 		})
 		attempts = append(attempts, probeAttempt{url: baseURL + "/chat/completions", body: chatBody})
 	}
+	responsesBody, _ := json.Marshal(map[string]any{
+		"model":             model,
+		"input":             "ping",
+		"stream":            false,
+		"max_output_tokens": 1,
+	})
+	attempts = append(attempts, probeAttempt{url: baseURL + "/responses", body: responsesBody})
 	return attempts
 }
 
