@@ -391,13 +391,5 @@ jobs:
           mkdir -p dist
           gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
           (cd dist && sha256sum "${PLUGIN_NAME}"_*.zip > checksums.txt)
-          cat >> "${RUNNER_TEMP}/release-notes.md" <<EOF
-
-          ## 发布资产
-
-          - 自动构建并上传 darwin_amd64、darwin_arm64、freebsd_amd64、linux_amd64、linux_arm64、windows_amd64、windows_arm64 发布包。
-          - 发布包按 CPA 插件商店格式命名，动态库位于 zip 根目录。
-          - checksums.txt 提供所有发布包的 SHA256 校验值。
-          EOF
           gh release upload "${tag}" dist/checksums.txt --clobber
           gh release edit "${tag}" --title "${tag}" --notes-file "${RUNNER_TEMP}/release-notes.md"
