@@ -68,20 +68,21 @@ type AntigravityPriorityRules struct {
 
 // CodexPriorityRules 是 Codex 排序规则的可配置部分。
 type CodexPriorityRules struct {
-	StartPriority            int
-	FreeDepletedPriority     int
-	FreeDepletedDisabled     bool
-	PaidDepletedKeepsEnabled bool
+	StartPriority        int
+	FreeDepletedPriority int
+	FreeDepletedDisabled bool
+	// PaidDepletedDisabled：Plus/Pro/Team 耗尽时是否禁用；true=禁用，false=保持启用。
+	PaidDepletedDisabled bool
 }
 
 // XAIPriorityRules 是 xAI 排序规则的可配置部分。
 type XAIPriorityRules struct {
-	StartPriority                       int
-	FreeDepletedPriority                int
-	FreeDepletedDisabled                bool
-	WeeklyDepletedPriority              int
-	MonthlyAndWeeklyDepletedPriority    int
-	MonthlyAndWeeklyDepletedDisabled    bool
+	StartPriority                    int
+	FreeDepletedPriority             int
+	FreeDepletedDisabled             bool
+	WeeklyDepletedPriority           int
+	MonthlyAndWeeklyDepletedPriority int
+	MonthlyAndWeeklyDepletedDisabled bool
 }
 
 type rawConfig struct {
@@ -126,7 +127,8 @@ type rawCodexPriority struct {
 	StartPriority            *int  `json:"start_priority"`
 	FreeDepletedPriority     *int  `json:"free_depleted_priority"`
 	FreeDepletedDisabled     *bool `json:"free_depleted_disabled"`
-	PaidDepletedKeepsEnabled *bool `json:"paid_depleted_keeps_enabled"`
+	PaidDepletedDisabled     *bool `json:"paid_depleted_disabled"`
+	PaidDepletedKeepsEnabled *bool `json:"paid_depleted_keeps_enabled"` // 兼容旧键：true=保持启用 → disabled=false
 }
 
 type rawXAIPriority struct {
@@ -257,10 +259,10 @@ func defaultPriorityRules() PriorityRules {
 			StartPriority: 100,
 		},
 		Codex: CodexPriorityRules{
-			StartPriority:            100,
-			FreeDepletedPriority:     -1,
-			FreeDepletedDisabled:     true,
-			PaidDepletedKeepsEnabled: true,
+			StartPriority:        100,
+			FreeDepletedPriority: -1,
+			FreeDepletedDisabled: true,
+			PaidDepletedDisabled: false,
 		},
 		XAI: XAIPriorityRules{
 			StartPriority:                    100,
@@ -316,18 +318,27 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 		cfg.AutoApply = *raw.AutoApply
 	}
 	if raw.ProviderScope != nil {
-		providerScope, err := parseProviderScope(*raw.ProviderScope)
+		providerScope, selectedFromScope, err := ParseProviderScopeValue(*raw.ProviderScope)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.ProviderScope = providerScope
+		if len(selectedFromScope) > 0 {
+			cfg.SelectedProviders = selectedFromScope
+		}
 	}
 	if raw.SelectedProviders.set {
 		providers, err := NormalizeSelectedProviders(raw.SelectedProviders.values)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.SelectedProviders = providers
+		// 旧 selected_providers 仅在 provider_scope 未直接给出列表时生效。
+		if raw.ProviderScope == nil || (cfg.ProviderScope == ProviderScopeSelected && len(cfg.SelectedProviders) == 0) {
+			cfg.SelectedProviders = providers
+			if len(providers) > 0 {
+				cfg.ProviderScope = ProviderScopeSelected
+			}
+		}
 	}
 	if raw.AntigravityModelGroup != nil {
 		modelGroup, err := ParseAntigravityModelGroup(*raw.AntigravityModelGroup)
@@ -449,8 +460,11 @@ func (raw rawCodexPriority) apply(rule CodexPriorityRules) (CodexPriorityRules, 
 	if raw.FreeDepletedDisabled != nil {
 		rule.FreeDepletedDisabled = *raw.FreeDepletedDisabled
 	}
-	if raw.PaidDepletedKeepsEnabled != nil {
-		rule.PaidDepletedKeepsEnabled = *raw.PaidDepletedKeepsEnabled
+	// 新键优先；旧 keeps_enabled 取反兼容。
+	if raw.PaidDepletedDisabled != nil {
+		rule.PaidDepletedDisabled = *raw.PaidDepletedDisabled
+	} else if raw.PaidDepletedKeepsEnabled != nil {
+		rule.PaidDepletedDisabled = !*raw.PaidDepletedKeepsEnabled
 	}
 	if rule.StartPriority < 1 {
 		return CodexPriorityRules{}, invalid("priority_rules.codex.start_priority", fmt.Sprint(rule.StartPriority), "must be at least 1")

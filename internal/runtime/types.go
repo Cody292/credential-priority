@@ -87,11 +87,44 @@ type RegisterResult struct {
 	Capabilities  map[string]bool `json:"capabilities"`
 }
 
+// ConfigField 描述 CPA 管理端渲染插件自有配置时使用的字段元数据。
+type ConfigField struct {
+	Name         string   `json:"Name"`
+	Type         string   `json:"Type"`
+	Description  string   `json:"Description"`
+	EnumValues   []string `json:"EnumValues,omitempty"`
+	DefaultValue any      `json:"DefaultValue"`
+}
+
 // Metadata 描述插件在 CPA 管理端展示的非敏感信息。
 type Metadata struct {
-	Name             string `json:"Name"`
-	Version          string `json:"Version"`
-	Author           string `json:"Author"`
-	GitHubRepository string `json:"GitHubRepository"`
-	Description      string `json:"Description"`
+	Name             string        `json:"Name"`
+	Version          string        `json:"Version"`
+	Author           string        `json:"Author"`
+	GitHubRepository string        `json:"GitHubRepository"`
+	Description      string        `json:"Description"`
+	ConfigFields     []ConfigField `json:"ConfigFields,omitempty"`
+}
+
+// RunHistoryEntry 是插件页「执行记录」使用的结构化摘要（最近 N 次）。
+type RunHistoryEntry struct {
+	At         time.Time              `json:"at"`
+	Kind       string                 `json:"kind"`
+	Trigger    string                 `json:"trigger"`
+	Attempted  int                    `json:"attempted"`
+	Succeeded  int                    `json:"succeeded"`
+	Failed     int                    `json:"failed"`
+	Skipped    int                    `json:"skipped"`
+	Providers  []RunHistoryProvider   `json:"providers,omitempty"`
+	Message    string                 `json:"message,omitempty"`
+}
+
+// RunHistoryProvider 是单次执行中某个提供商的计数。
+type RunHistoryProvider struct {
+	Name      string `json:"name"`
+	Attempted int    `json:"attempted"`
+	Succeeded int    `json:"succeeded"`
+	Failed    int    `json:"failed"`
+	Skipped   int    `json:"skipped"`
+	Error     string `json:"error,omitempty"`
 }

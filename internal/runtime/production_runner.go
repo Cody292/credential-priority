@@ -62,14 +62,35 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	plan = withProbeFailureTemporaryDisables(plan, evidence)
 	if request.Trigger == TriggerManual {
 		result := apply.Result{Snapshot: apply.Snapshot(plan)}
-		r.snapshotRun(result, "dry-run plan generated")
+		providerEntries := runHistoryProvidersFromResult(result)
+		r.snapshotRunEntry(result, "dry-run plan generated", RunHistoryEntry{
+			Kind:      "dry_run",
+			Trigger:   string(request.Trigger),
+			Attempted: result.Attempted,
+			Succeeded: result.Succeeded,
+			Failed:    result.Failed,
+			Skipped:   result.Skipped,
+			Providers: providerEntries,
+			Message:   "dry-run plan generated",
+		})
 		return nil
 	}
 	result, err := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan, ReportSkippedPlan: true})
 	if err != nil {
 		return err
 	}
-	r.snapshotRun(result, fmt.Sprintf("apply attempted=%d succeeded=%d failed=%d skipped=%d", result.Attempted, result.Succeeded, result.Failed, result.Skipped))
+	providerEntries := runHistoryProvidersFromResult(result)
+	summary := fmt.Sprintf("apply credentials=%d succeeded=%d failed=%d skipped=%d", result.Attempted+result.Skipped, result.Succeeded, result.Failed, result.Skipped)
+	r.snapshotRunEntry(result, summary, RunHistoryEntry{
+		Kind:      "apply",
+		Trigger:   string(request.Trigger),
+		Attempted: result.Attempted,
+		Succeeded: result.Succeeded,
+		Failed:    result.Failed,
+		Skipped:   result.Skipped,
+		Providers: providerEntries,
+		Message:   summary,
+	})
 	return nil
 }
 
@@ -100,7 +121,11 @@ func (r *Runtime) runAutoParallelProviders(ctx context.Context, request TaskRequ
 
 	providers := autoProvidersFromCredentials(allCredentials, request.Config)
 	if len(providers) == 0 {
-		r.snapshotRun(apply.Result{}, "auto_apply no supported providers")
+		r.snapshotRunEntry(apply.Result{}, "auto_apply no supported providers", RunHistoryEntry{
+			Kind:    "auto_apply",
+			Trigger: string(TriggerAutoApply),
+			Message: "auto_apply no supported providers",
+		})
 		return nil
 	}
 
@@ -153,22 +178,89 @@ func (r *Runtime) runAutoParallelProviders(ctx context.Context, request TaskRequ
 		skipped   int
 	)
 	parts := make([]string, 0, len(providers))
+	providerEntries := make([]RunHistoryProvider, 0, len(providers))
 	for item := range results {
-		if item.err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("%s: %w", item.provider, item.err)
+		errText := ""
+		if item.err != nil {
+			errText = item.err.Error()
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", item.provider, item.err)
+			}
 		}
 		attempted += item.result.Attempted
 		succeeded += item.result.Succeeded
 		failed += item.result.Failed
 		skipped += item.result.Skipped
 		parts = append(parts, fmt.Sprintf("%s attempted=%d succeeded=%d failed=%d skipped=%d", item.provider, item.result.Attempted, item.result.Succeeded, item.result.Failed, item.result.Skipped))
+		providerEntries = append(providerEntries, RunHistoryProvider{
+			Name:      string(item.provider),
+			Attempted: item.result.Attempted,
+			Succeeded: item.result.Succeeded,
+			Failed:    item.result.Failed,
+			Skipped:   item.result.Skipped,
+			Error:     errText,
+		})
 	}
+	summary := "auto_apply parallel: " + strings.Join(parts, "; ")
+	result := apply.Result{Attempted: attempted, Succeeded: succeeded, Failed: failed, Skipped: skipped}
+	// 先写 history，再 SaveAtomic：避免 SaveAtomic/ctx 失败导致「无记录却算跑过」。
+	r.snapshotRunEntry(result, summary, RunHistoryEntry{
+		Kind:      "auto_apply",
+		Trigger:   string(TriggerAutoApply),
+		Attempted: attempted,
+		Succeeded: succeeded,
+		Failed:    failed,
+		Skipped:   skipped,
+		Providers: providerEntries,
+		Message:   summary,
+	})
 	if err := store.SaveAtomic(ctx); err != nil {
 		return err
 	}
-	summary := "auto_apply parallel: " + strings.Join(parts, "; ")
-	r.snapshotRun(apply.Result{Attempted: attempted, Succeeded: succeeded, Failed: failed, Skipped: skipped}, summary)
 	return firstErr
+}
+
+// runHistoryProvidersFromResult 将 apply 结果按提供商分桶，供执行记录 UI 与自动排序对齐展示。
+func runHistoryProvidersFromResult(result apply.Result) []RunHistoryProvider {
+	order := []string{string(core.ProviderAntigravity), string(core.ProviderCodex), string(core.ProviderXAI)}
+	buckets := make(map[string]*RunHistoryProvider, len(order))
+	for _, name := range order {
+		buckets[name] = &RunHistoryProvider{Name: name}
+	}
+	for _, change := range result.Changes {
+		name := strings.ToLower(strings.TrimSpace(change.Provider))
+		if name == "" {
+			continue
+		}
+		bucket, ok := buckets[name]
+		if !ok {
+			bucket = &RunHistoryProvider{Name: name}
+			buckets[name] = bucket
+			order = append(order, name)
+		}
+		switch change.Status {
+		case apply.ChangeStatusSuccess:
+			bucket.Attempted++
+			bucket.Succeeded++
+		case apply.ChangeStatusFailed:
+			bucket.Attempted++
+			bucket.Failed++
+		case apply.ChangeStatusSkipped:
+			bucket.Skipped++
+		}
+	}
+	out := make([]RunHistoryProvider, 0, len(order))
+	for _, name := range order {
+		bucket := buckets[name]
+		if bucket == nil {
+			continue
+		}
+		if bucket.Attempted == 0 && bucket.Succeeded == 0 && bucket.Failed == 0 && bucket.Skipped == 0 {
+			continue
+		}
+		out = append(out, *bucket)
+	}
+	return out
 }
 
 func autoProvidersFromCredentials(credentials []core.Credential, cfg config.Config) []string {
@@ -457,7 +549,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 	if cfg.PriorityRules.Enabled {
 		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
 		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled
-		paidDepletedKeepsEnabled := cfg.PriorityRules.Codex.PaidDepletedKeepsEnabled
+		paidDepletedDisabled := cfg.PriorityRules.Codex.PaidDepletedDisabled
 		xaiFreePriority := cfg.PriorityRules.XAI.FreeDepletedPriority
 		xaiFreeDisabled := cfg.PriorityRules.XAI.FreeDepletedDisabled
 		xaiWeeklyPriority := cfg.PriorityRules.XAI.WeeklyDepletedPriority
@@ -470,7 +562,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		}
 		options.CodexFreeDepletedPriority = &freeDepletedPriority
 		options.CodexFreeDepletedDisabled = &freeDepletedDisabled
-		options.CodexPaidDepletedKeepsEnabled = &paidDepletedKeepsEnabled
+		options.CodexPaidDepletedDisabled = &paidDepletedDisabled
 		options.XAIFreeDepletedPriority = &xaiFreePriority
 		options.XAIFreeDepletedDisabled = &xaiFreeDisabled
 		options.XAIWeeklyDepletedPriority = &xaiWeeklyPriority

@@ -149,11 +149,16 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// routeSourceHeader 标记请求来自 resource 还是 management，供 Handler 做边界校验。
+// 仅插件内部使用，不依赖宿主透传。
+const routeSourceHeader = "X-Credential-Priority-Route-Source"
+
 func (r ManagementRequest) toHTTPRequest(ctx context.Context) (*http.Request, error) {
-	path := normalizeManagementPath(r.Path)
-	if !strings.HasPrefix(path, "/") {
+	normalized, source := normalizeManagementPath(r.Path)
+	if !strings.HasPrefix(normalized, "/") {
 		return nil, fmt.Errorf("%w: management path must start with /", ErrInvalidRequest)
 	}
+	path := normalized
 	if r.Query != nil {
 		encoded := r.Query.Encode()
 		if encoded != "" {
@@ -164,33 +169,40 @@ func (r ManagementRequest) toHTTPRequest(ctx context.Context) (*http.Request, er
 	if err != nil {
 		return nil, fmt.Errorf("%w: build management request: %v", ErrInvalidRequest, err)
 	}
-	request.Header = r.Headers
+	// 复制宿主头后写入路由来源，避免 resource 前缀被误当成 management 动态 API。
+	if r.Headers != nil {
+		request.Header = r.Headers.Clone()
+	} else {
+		request.Header = make(http.Header)
+	}
+	request.Header.Set(routeSourceHeader, source)
 	return request, nil
 }
 
-func normalizeManagementPath(path string) string {
+// normalizeManagementPath 将宿主完整路径规约为插件内相对路径，并标明来源。
+// resource → 仅允许静态 /status；management/legacy → 动态业务路由。
+func normalizeManagementPath(path string) (normalized string, source string) {
 	resourcePrefix := "/v0/resource/plugins/" + config.PluginID
 	managementPrefix := "/v0/management/plugins/" + config.PluginID
-	if path == resourcePrefix {
-		return "/"
-	}
-	if strings.HasPrefix(path, resourcePrefix+"/") {
-		return strings.TrimPrefix(path, resourcePrefix)
-	}
-	if path == managementPrefix {
-		return "/"
-	}
-	if strings.HasPrefix(path, managementPrefix+"/") {
-		return strings.TrimPrefix(path, managementPrefix)
-	}
 	legacyRoutePrefix := "/plugins/" + config.PluginID
-	if path == legacyRoutePrefix {
-		return "/"
+
+	switch {
+	case path == resourcePrefix:
+		return "/", "resource"
+	case strings.HasPrefix(path, resourcePrefix+"/"):
+		return strings.TrimPrefix(path, resourcePrefix), "resource"
+	case path == managementPrefix:
+		return "/", "management"
+	case strings.HasPrefix(path, managementPrefix+"/"):
+		return strings.TrimPrefix(path, managementPrefix), "management"
+	case path == legacyRoutePrefix:
+		return "/", "management"
+	case strings.HasPrefix(path, legacyRoutePrefix+"/"):
+		return strings.TrimPrefix(path, legacyRoutePrefix), "management"
+	default:
+		// 未识别前缀按 management 处理，仍由 Handler 白名单拒绝未知路径。
+		return path, "management"
 	}
-	if strings.HasPrefix(path, legacyRoutePrefix+"/") {
-		return strings.TrimPrefix(path, legacyRoutePrefix)
-	}
-	return path
 }
 
 func newManagementResponse(recorder *httptest.ResponseRecorder) ManagementResponse {
@@ -259,14 +271,26 @@ func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, erro
 		return nil, err
 	}
 	result, audit := r.runtime.currentRunSnapshot()
+	r.runtime.mu.Lock()
+	lastAuto := r.runtime.lastAutoApplyAt
+	workerActive := r.runtime.worker != nil
+	r.runtime.mu.Unlock()
+	nextWait := r.runtime.nextAutoApplyWait(cfg.Interval)
 	return map[string]any{
 		"management_api": map[string]any{
 			"status":     "ready",
 			"auto_apply": cfg.AutoApply,
 			"enabled":    cfg.Enabled,
 		},
+		"scheduler": map[string]any{
+			"interval":           cfg.Interval.String(),
+			"last_auto_apply_at": lastAuto,
+			"next_wait":          nextWait.String(),
+			"worker_active":      workerActive,
+		},
 		"latest_audit": audit,
 		"last_result":  result,
+		"run_history":  r.runtime.currentRunHistory(),
 	}, nil
 }
 

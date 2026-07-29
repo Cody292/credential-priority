@@ -10,21 +10,21 @@ import (
 
 // Options 是 fresh-only 优先级规划器的已解析策略参数。
 type Options struct {
-	Now                           time.Time
-	MaxPriority                   int
-	StartPriorityByProvider       map[core.Provider]int
-	CodexFreeDepletedPriority     *int
-	CodexFreeDepletedDisabled     *bool
-	CodexPaidDepletedKeepsEnabled *bool
-	XAIFreeDepletedPriority              *int
-	XAIFreeDepletedDisabled              *bool
-	XAIWeeklyDepletedPriority            *int
-	XAIMonthlyAndWeeklyDepletedPriority  *int
-	XAIMonthlyAndWeeklyDepletedDisabled  *bool
-	MinChange                     int
-	PaidFirst                     bool
-	ResetBoostWithin              time.Duration
-	ResetBoost                    int
+	Now                                 time.Time
+	MaxPriority                         int
+	StartPriorityByProvider             map[core.Provider]int
+	CodexFreeDepletedPriority           *int
+	CodexFreeDepletedDisabled           *bool
+	CodexPaidDepletedDisabled           *bool
+	XAIFreeDepletedPriority             *int
+	XAIFreeDepletedDisabled             *bool
+	XAIWeeklyDepletedPriority           *int
+	XAIMonthlyAndWeeklyDepletedPriority *int
+	XAIMonthlyAndWeeklyDepletedDisabled *bool
+	MinChange                           int
+	PaidFirst                           bool
+	ResetBoostWithin                    time.Duration
+	ResetBoost                          int
 }
 
 // ProbeEvidence 是本轮 probe 产出的排序证据；EvidenceFresh=false 时不得驱动变更。
@@ -149,7 +149,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
 				item.Priority = codexFreeDepletedPriority(options)
-				item.Disabled = credential.Disabled || !codexPaidDepletedKeepsEnabled(options)
+				item.Disabled = credential.Disabled || codexPaidDepletedDisabled(options)
 				item.Reason = "fresh paid remaining depleted"
 			} else if isXAIFreeDepleted(credential, evidence) {
 				item.PlanType = evidence.PlanType
@@ -247,11 +247,11 @@ func codexFreeDepletedDisabled(options Options) bool {
 	return *options.CodexFreeDepletedDisabled
 }
 
-func codexPaidDepletedKeepsEnabled(options Options) bool {
-	if options.CodexPaidDepletedKeepsEnabled == nil {
-		return true
+func codexPaidDepletedDisabled(options Options) bool {
+	if options.CodexPaidDepletedDisabled == nil {
+		return false
 	}
-	return *options.CodexPaidDepletedKeepsEnabled
+	return *options.CodexPaidDepletedDisabled
 }
 
 func isXAICredential(credential core.Credential) bool {

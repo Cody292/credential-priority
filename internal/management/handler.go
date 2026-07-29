@@ -55,14 +55,28 @@ func NewHandler(runner Runner) *Handler {
 	}
 }
 
+// routeSourceHeader 与 runtime 层约定一致：resource 仅静态壳，management 才跑动态业务。
+const routeSourceHeader = "X-Credential-Priority-Route-Source"
+
 // ServeHTTP 实现 http.Handler 接口。
+// resource 前缀：仅 GET /status 静态 HTML。
+// management 前缀：POST /run、GET /diagnostics、GET /snapshot/latest。
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	method := r.Method
+	source := r.Header.Get(routeSourceHeader)
+
+	// 资源路由边界：禁止在 resource 上承载 run/apply/config 等动态业务。
+	if source == "resource" {
+		if path == "/status" && method == http.MethodGet {
+			h.handleStatus(w, r)
+			return
+		}
+		h.writeJSONError(w, http.StatusNotFound, "resource route only serves static /status")
+		return
+	}
 
 	switch {
-	case path == "/status" && method == http.MethodGet:
-		h.handleStatus(w, r)
 	case path == "/run" && method == http.MethodPost:
 		h.handleRun(w, r)
 	case path == "/diagnostics" && method == http.MethodGet:
@@ -76,21 +90,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleStatus 返回静态 HTML 壳（Key 验证 + 只读概览/配置展示 + 手动排序入口）。
+// 不在服务端注入动态业务数据；只读数据与 run 均由浏览器调用 management 路径完成。
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := h.runner.Status(r.Context())
-	if err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// 保证 LatestAudit 进行了脱敏处理
-	status.LatestAudit = redactText(status.LatestAudit)
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	if err := parsedStatusTemplate.Execute(w, status); err != nil {
-		// 如果模板渲染失败，记录并回退到基本文本/错误
-		http.Error(w, "render template failed: "+err.Error(), http.StatusInternalServerError)
+	if _, err := w.Write([]byte(StatusHTML)); err != nil {
+		// 响应已开始写入时无法再改状态码，仅尽量结束。
+		return
 	}
 }
 

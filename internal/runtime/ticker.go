@@ -7,24 +7,52 @@ import (
 )
 
 type tickerWorker struct {
-	ticker Ticker
-	cancel context.CancelFunc
-	done   chan struct{}
+	interval time.Duration
+	ticker   Ticker // 可选；生产路径用 Sleep 调度，测试可注入 Ticker
+	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 func (w *tickerWorker) start(rootCtx context.Context, rt *Runtime) {
 	ctx, cancel := context.WithCancel(rootCtx)
 	w.cancel = cancel
+	interval := w.interval
+	if interval <= 0 {
+		interval = 15 * time.Minute
+	}
 	go func() {
 		defer close(w.done)
-		// 启动/reconfigure 后立即跑一轮，避免干等整个 interval。
-		// 若已有手动/自动轮次占用 runMu，则跳过并等下一次 tick。
-		_ = rt.AutoApply(ctx)
+		// 延迟首轮：避免在 plugin.register/reconfigure 调用栈内立刻回调宿主（重入死锁）。
+		// 之后：执行成功 → 等待完整 interval → 再执行。
+		startupDelay := 2 * time.Second
+		timer := time.NewTimer(startupDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		}
 		for {
+			if ctx.Err() != nil {
+				return
+			}
+			_ = rt.AutoApply(ctx)
+			wait := rt.nextAutoApplyWait(interval)
+			timer = time.NewTimer(wait)
 			select {
-			case <-w.ticker.Chan():
-				_ = rt.AutoApply(ctx)
+			case <-timer.C:
 			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				return
 			}
 		}
@@ -35,8 +63,12 @@ func stopWorker(ctx context.Context, worker *tickerWorker) error {
 	if worker == nil {
 		return nil
 	}
-	worker.ticker.Stop()
-	worker.cancel()
+	if worker.ticker != nil {
+		worker.ticker.Stop()
+	}
+	if worker.cancel != nil {
+		worker.cancel()
+	}
 	select {
 	case <-worker.done:
 		return nil
@@ -47,7 +79,12 @@ func stopWorker(ctx context.Context, worker *tickerWorker) error {
 
 func stopNewWorker(worker *tickerWorker, err error) error {
 	if worker != nil {
-		worker.ticker.Stop()
+		if worker.ticker != nil {
+			worker.ticker.Stop()
+		}
+		if worker.cancel != nil {
+			worker.cancel()
+		}
 	}
 	return err
 }
@@ -55,7 +92,8 @@ func stopNewWorker(worker *tickerWorker, err error) error {
 type timeTickerFactory struct{}
 
 func (timeTickerFactory) NewTicker(interval time.Duration) Ticker {
-	return timeTicker{ticker: time.NewTicker(interval)}
+	// 生产路径不再依赖周期性 Ticker 触发；保留接口兼容测试注入。
+	return nil
 }
 
 type timeTicker struct {

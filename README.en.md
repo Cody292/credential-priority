@@ -25,6 +25,8 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 - Currently supports Antigravity, Codex, and xAI credentials; additional providers may be added later.
 - Provider rules are independent: Antigravity, Codex, and xAI do not share start priorities or depletion behavior.
 - Status pages, diagnostics, snapshots, and logs expose only redacted credential information.
+- **Automatic priority and rules** are edited via CPA **Plugin Manager visual ConfigFields** (recommended), or host `config.yaml` / `plugins.configs.credential-priority`.
+- **Plugin page** supports Management Key verification, overview (read-only effective config), run history (last 5), help, and manual apply (management routes). **It does not save config on the plugin page.**
 
 ## Workflow
 
@@ -32,7 +34,7 @@ Credential Priority is a CLIProxyAPI (CPA) plugin that automatically adjusts cre
 Load plugin
   -> Read plugins.configs.credential-priority config
   -> Fetch CPA credential list through host.auth.list
-  -> Filter currently supported providers by provider_scope / selected_providers
+  -> Filter currently supported providers by provider_scope (all or antigravity|codex|xai)
        - Antigravity: probe remaining quota for the selected model group
        - Codex: probe availability by account plan and quota state
        - xAI: probe free / weekly / monthly quota signals in the current run
@@ -85,8 +87,7 @@ plugins:
       enabled: true
       priority: 10
       auto_apply: false
-      provider_scope: "all"
-      selected_providers: []
+      provider_scope: "all"   # or "antigravity|codex|xai"
       antigravity_model_group: "gemini"
       priority_rules:
         enabled: false
@@ -96,7 +97,7 @@ plugins:
           start_priority: 100
           free_depleted_priority: -1
           free_depleted_disabled: true
-          paid_depleted_keeps_enabled: true
+          paid_depleted_disabled: false
 ```
 
 | Field | Description |
@@ -104,8 +105,7 @@ plugins:
 | `enabled` | Per-plugin switch. Global `plugins.enabled: true` and successful dynamic library registration are also required. |
 | `priority` | CPA plugin loading and execution order. Higher values run earlier. |
 | `auto_apply` | Enables scheduled execution and write-back. Default: `false`. |
-| `provider_scope` | `all` handles all currently supported providers; `selected` handles only `selected_providers`. |
-| `selected_providers` | Supports `antigravity`, `codex`, and `xai`. Empty selected scope falls back to `all`. |
+| `provider_scope` | `all` handles every currently supported provider; or list one or more providers separated by `\|`, e.g. `antigravity\|codex\|xai`. Legacy `selected` + `selected_providers` remains supported. |
 | `antigravity_model_group` | Antigravity quota group: `gemini` or `claude_gpt`. |
 | `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. |
 
@@ -122,7 +122,7 @@ Codex rules
 - `priority_rules.codex.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.codex.free_depleted_priority`: priority for depleted Free credentials. Default: `-1`.
 - `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
-- `priority_rules.codex.paid_depleted_keeps_enabled`: keeps Plus, Pro, and Team credentials enabled when depleted. Default: `true`.
+- `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
 - `priority_rules.xai.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.xai.free_depleted_priority`: priority for free usage depleted. Default: `-1`.
 - `priority_rules.xai.free_depleted_disabled`: disables free usage depleted credentials. Default: `true`.
@@ -132,19 +132,26 @@ Codex rules
 
 ## Management Page and API
 
-The plugin registers a resource page and management routes through `management.register`.
+The plugin registers **resources** (static shell) and **routes** (dynamic APIs) via `management.register`.
 
-### Resource Page
+### Product boundary
+
+| Capability | Entry | Notes |
+| :--- | :--- | :--- |
+| Automatic priority and rules | CPA Plugin Manager visual fields (recommended) or `config.yaml` | `auto_apply`, `provider_scope` (all or a\|b\|c), `interval`, `priority_rules.*`, etc. |
+| Resource page | `/v0/resource/plugins/credential-priority/status` | Static HTML: key verify + overview / run history / help + manual sort |
+| Manual apply | `/v0/management/plugins/credential-priority/run` | Requires Management Key |
+| Read-only config | Host `GET /v0/management/plugins/credential-priority/config` | Display only; no plugin-page PATCH |
+
+### Resource page (static)
 
 - `GET /v0/resource/plugins/credential-priority/status`
-  Returns an HTML dashboard with credential totals, provider counts, next probe time, recent audit summary, and redacted decisions.
+  Returns a static HTML shell. The browser uses the Management Key for read-only data, run history, and management-path manual runs. **No in-page config save controls.**
 
-### Management API
-
-The following endpoints require the CPA management key:
+### Management API (dynamic, key required)
 
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider_scope=all&antigravity_model_group=gemini`
-  Manually probes, plans, and writes credential changes.
+  Manual probe, plan, and write-back of credential priorities.
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=claude_gpt`
   Handles only Antigravity credentials with the Claude/GPT model group.
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=codex`

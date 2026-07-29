@@ -31,6 +31,8 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
 - 当前支持 Antigravity、Codex 与 xAI 凭证；后续可扩展其他提供商配置。
 - 不同提供商的排序规则彼此独立，Antigravity、Codex 与 xAI 不共享起始优先级或额度耗尽策略。
 - 状态页、诊断、快照与日志只输出脱敏后的凭证信息。
+- **自动优先级与规则**通过 CPA **插件管理可视化配置字段**（`ConfigFields`）编辑；也可直接改 `config.yaml` / `plugins.configs.credential-priority`。
+- **插件页**支持 Management Key 验证、概览（只读生效配置）、执行记录（近 5 次）、帮助，以及手动 apply（management 路径）；**不在插件页内保存配置**。
 
 ## 工作流程
 
@@ -38,7 +40,7 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
 加载插件
   -> 读取 plugins.configs.credential-priority 配置
   -> 通过 host.auth.list 获取 CPA 凭证列表
-  -> 按 provider_scope / selected_providers 筛选当前支持的提供商
+  -> 按 provider_scope（all 或 antigravity|codex|xai）筛选当前支持的提供商
        - Antigravity：按所选模型组探测剩余额度
        - Codex：按账号计划与额度状态探测可用性
        - xAI：按本轮探测额度信号（免费/周/月）判定可用性
@@ -91,8 +93,7 @@ plugins:
       enabled: true
       priority: 10
       auto_apply: false
-      provider_scope: "all"
-      selected_providers: []
+      provider_scope: "all"   # 或 "antigravity|codex|xai"
       antigravity_model_group: "gemini"
       priority_rules:
         enabled: false
@@ -102,7 +103,7 @@ plugins:
           start_priority: 100
           free_depleted_priority: -1
           free_depleted_disabled: true
-          paid_depleted_keeps_enabled: true
+          paid_depleted_disabled: false
 ```
 
 字段说明：
@@ -112,8 +113,7 @@ plugins:
 | `enabled` | 单插件开关；还需要全局 `plugins.enabled: true` 且动态库注册成功。 |
 | `priority` | CPA 宿主加载与执行插件的顺序，数值越大优先级越高。 |
 | `auto_apply` | 是否由定时器自动执行并写回排序结果，默认 `false`。 |
-| `provider_scope` | `all` 表示处理全部当前支持的提供商；`selected` 表示只处理 `selected_providers`。 |
-| `selected_providers` | 支持 `antigravity`、`codex` 与 `xai`；为空且 `provider_scope: selected` 时会回退为 `all`。 |
+| `provider_scope` | `all` 处理全部当前支持的提供商；也可填单个或多个提供商，多个用 `\|` 分隔，例如 `antigravity\|codex\|xai`。兼容旧配置 `selected` + `selected_providers`。 |
 | `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini` 与 `claude_gpt`。 |
 | `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略。 |
 
@@ -130,7 +130,7 @@ Codex 规则
 - `priority_rules.codex.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
 - `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
-- `priority_rules.codex.paid_depleted_keeps_enabled`：Plus、Pro、Team 额度耗尽时是否保持启用，默认 `true`。
+- `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
 - `priority_rules.xai.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.xai.free_depleted_priority`：免费额度耗尽时写入的优先级，默认 `-1`。
 - `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否禁用，默认 `true`。
@@ -140,19 +140,26 @@ Codex 规则
 
 ## 管理页面与接口
 
-插件通过 `management.register` 注册资源页面和管理路由。
+插件通过 `management.register` 分别注册 **resources**（静态壳）与 **routes**（动态业务）。
 
-### 资源页面
+### 产品边界
+
+| 能力 | 入口 | 说明 |
+| :--- | :--- | :--- |
+| 自动优先级与规则配置 | CPA 插件管理可视化字段（推荐）或 `config.yaml` | `auto_apply`、`provider_scope`（all 或 a\|b\|c）、`interval`、`priority_rules.*` 等 |
+| 插件资源页 | `/v0/resource/plugins/credential-priority/status` | 静态 HTML：Key 验证 + 概览/执行记录/帮助 + 手动排序 |
+| 手动 apply | `/v0/management/plugins/credential-priority/run` | 需要 Management Key |
+| 只读配置 | 宿主 `GET /v0/management/plugins/credential-priority/config` | 插件页只读展示，不在插件页 PATCH |
+
+### 资源页面（静态）
 
 - `GET /v0/resource/plugins/credential-priority/status`
-  返回 HTML 看板，展示凭证总数、提供商数量、下一次探测时间、最近审计摘要和脱敏决策结果。
+  返回静态 HTML 壳。浏览器侧用 Management Key 拉取只读数据与执行记录，并调用 management 路径手动排序。**无插件页内配置保存控件。**
 
-### 管理 API
-
-以下接口需要 CPA 管理密钥：
+### 管理 API（动态，需密钥）
 
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider_scope=all&antigravity_model_group=gemini`
-  手动触发探测、规划并写入凭证。
+  手动触发探测、规划并写回凭证优先级。
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=claude_gpt`
   只处理 Antigravity 凭证并使用 Claude/GPT 模型组。
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=codex`
