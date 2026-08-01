@@ -576,6 +576,15 @@ func probePolicy(cacheTTL time.Duration) state.ProbePolicy {
 	return state.ProbePolicy{TTL: cacheTTL, ResetStaleAfter: time.Hour}
 }
 
+// probePolicyForProvider：xAI 使用 24h CacheTTL，避免默认 15m TTL 覆盖 NextProbeAt 导致狂探。
+// 其它 provider 保持配置 CacheTTL（默认 15m）。
+func probePolicyForProvider(provider core.Provider, cacheTTL time.Duration) state.ProbePolicy {
+	if provider == core.ProviderXAI {
+		return state.ProbePolicy{TTL: xaiPositiveProbeInterval, ResetStaleAfter: time.Hour}
+	}
+	return probePolicy(cacheTTL)
+}
+
 type fixedClock struct {
 	now time.Time
 }

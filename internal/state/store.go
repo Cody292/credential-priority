@@ -40,6 +40,13 @@ type Entry struct {
 	Source        Source        `json:"source"`
 	LastError     string        `json:"last_error"`
 	NextProbeAt   time.Time     `json:"next_probe_at"`
+	AuthInvalid   bool          `json:"auth_invalid,omitempty"`
+	// xAI free 策略扩展字段（旁路 store，兼容旧缓存缺省）。
+	PlanClass       string    `json:"plan_class,omitempty"`        // free | paid
+	QuotaFailCount  int       `json:"quota_fail_count,omitempty"`  // 连续额度类失败次数
+	FirstSuccessAt  time.Time `json:"first_success_at,omitempty"`  // 首次成功调用锚点 A
+	NextEligibleAt  time.Time `json:"next_eligible_at,omitempty"`  // free 冷却到期时刻
+	XAIDepletedKind string    `json:"xai_depleted_kind,omitempty"` // free | weekly | monthly_and_weekly
 }
 
 // ProbePolicy 定义状态缓存何时必须重新 fresh probe。
@@ -59,14 +66,22 @@ type ProbeCheck struct {
 
 // ProbeSuccess 是 fresh probe 成功后写入缓存的状态。
 type ProbeSuccess struct {
-	AuthIndex   string
-	Provider    core.Provider
-	ModelGroup  string
-	ObservedAt  time.Time
-	ResetAt     time.Time
-	Remaining   int
-	Source      Source
-	NextProbeAt time.Time
+	AuthIndex       string
+	Provider        core.Provider
+	ModelGroup      string
+	ObservedAt      time.Time
+	ResetAt         time.Time
+	Remaining       int
+	Source          Source
+	NextProbeAt     time.Time
+	AuthInvalid     bool
+	PlanClass       string
+	QuotaFailCount  int
+	FirstSuccessAt  time.Time
+	NextEligibleAt  time.Time
+	XAIDepletedKind string
+	// PreserveXAIPolicy：true 时合并已有 xAI 策略字段（仅当入参零值）。
+	PreserveXAIPolicy bool
 }
 
 // ProbeFailure 是 probe 失败后用于节流与诊断的状态。
@@ -160,22 +175,77 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("mark probe success context: %w", err)
 	}
-	entry := Entry{
-		SchemaVersion: SchemaVersion,
-		Provider:      success.Provider,
-		ModelGroup:    entryModelGroup(success.ModelGroup),
-		AuthIndex:     authIndexKey(success.AuthIndex),
-		ObservedAt:    success.ObservedAt.UTC(),
-		ResetAt:       success.ResetAt.UTC(),
-		Remaining:     success.Remaining,
-		Source:        success.Source,
-		LastError:     "",
-		NextProbeAt:   success.NextProbeAt.UTC(),
-	}
+	key := entryKey(success.AuthIndex, success.ModelGroup)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[entryKey(success.AuthIndex, success.ModelGroup)] = entry
+	prev := s.entries[key]
+	entry := Entry{
+		SchemaVersion:   SchemaVersion,
+		Provider:        success.Provider,
+		ModelGroup:      entryModelGroup(success.ModelGroup),
+		AuthIndex:       authIndexKey(success.AuthIndex),
+		ObservedAt:      success.ObservedAt.UTC(),
+		ResetAt:         success.ResetAt.UTC(),
+		Remaining:       success.Remaining,
+		Source:          success.Source,
+		LastError:       "",
+		NextProbeAt:     success.NextProbeAt.UTC(),
+		AuthInvalid:     success.AuthInvalid,
+		PlanClass:       success.PlanClass,
+		QuotaFailCount:  success.QuotaFailCount,
+		FirstSuccessAt:  utcOrZero(success.FirstSuccessAt),
+		NextEligibleAt:  utcOrZero(success.NextEligibleAt),
+		XAIDepletedKind: success.XAIDepletedKind,
+	}
+	if success.PreserveXAIPolicy {
+		if entry.PlanClass == "" {
+			entry.PlanClass = prev.PlanClass
+		}
+		if entry.FirstSuccessAt.IsZero() {
+			entry.FirstSuccessAt = prev.FirstSuccessAt
+		}
+		if entry.NextEligibleAt.IsZero() {
+			entry.NextEligibleAt = prev.NextEligibleAt
+		}
+		if entry.XAIDepletedKind == "" {
+			entry.XAIDepletedKind = prev.XAIDepletedKind
+		}
+		// QuotaFailCount 以 success 为准（调用方显式传入，含清零）。
+	}
+	s.entries[key] = entry
 	return nil
+}
+
+// UpsertXAIPolicy 合并写入 xAI free 策略字段，不破坏其它探测节流字段。
+func (s *Store) UpsertXAIPolicy(ctx context.Context, authIndex string, mutate func(entry *Entry)) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("upsert xai policy context: %w", err)
+	}
+	key := entryKey(authIndex, "")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.entries[key]
+	entry.SchemaVersion = SchemaVersion
+	entry.Provider = core.ProviderXAI
+	entry.AuthIndex = authIndexKey(authIndex)
+	mutate(&entry)
+	s.entries[key] = entry
+	return nil
+}
+
+// GetEntry 返回指定 auth_index 缓存副本。
+func (s *Store) GetEntry(authIndex string, modelGroup string) (Entry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
+	return entry, ok
+}
+
+func utcOrZero(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // MarkProbeFailure 写入 probe 失败后的脱敏错误与下次探测时间。
@@ -217,6 +287,8 @@ func (s *Store) MarkProbeScheduled(ctx context.Context, schedule ProbeSchedule) 
 }
 
 // NeedsProbe 判断 auth_index 是否必须重新执行 fresh probe。
+// xAI：NextProbeAt 未到时即使 CacheTTL 过期也不强制 re-probe（除 ResetAt 已到）；
+// 其它 provider：保持 TTL 优先于 NextProbeAt 的历史语义。
 func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("needs probe context: %w", err)
@@ -237,13 +309,31 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 	if entry.ModelGroup != entryModelGroup(check.ModelGroup) {
 		return true, nil
 	}
-	if isTTLExpired(entry, check) {
-		return true, nil
-	}
+	// ResetAt 到达：额度窗口刷新，必须 re-probe（含 soft-disabled xAI）。
 	if isResetReached(entry, check.Now) {
 		return true, nil
 	}
 	if isResetTooOld(entry, check) {
+		return true, nil
+	}
+	// xAI AuthInvalid：自动路径也必须继续探测（可被 forceProbe/manual 覆盖）。
+	if check.Provider == core.ProviderXAI && entry.AuthInvalid {
+		return true, nil
+	}
+	// xAI 节流：NextProbeAt 保护优先于短 CacheTTL，避免 15m auto 狂探。
+	if check.Provider == core.ProviderXAI {
+		if !entry.NextProbeAt.IsZero() && check.Now.Before(entry.NextProbeAt) {
+			return false, nil
+		}
+		if isTTLExpired(entry, check) {
+			return true, nil
+		}
+		if !entry.NextProbeAt.IsZero() && !check.Now.Before(entry.NextProbeAt) {
+			return true, nil
+		}
+		return false, nil
+	}
+	if isTTLExpired(entry, check) {
 		return true, nil
 	}
 	if !entry.NextProbeAt.IsZero() && check.Now.Before(entry.NextProbeAt) {

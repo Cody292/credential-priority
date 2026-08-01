@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,7 +82,7 @@ func runProbeJobs(ctx context.Context, probers probeSet, input collectInput, job
 		evidence := make([]priority.ProbeEvidence, 0, len(jobs))
 		for _, job := range jobs {
 			item, err := probers.probeAndRecord(ctx, probeAndRecordInput{
-				store: input.store, strategy: job.strategy, provider: job.provider, credential: job.credential,
+				store: input.store, client: input.client, strategy: job.strategy, provider: job.provider, credential: job.credential,
 				accountID: job.accountID, authMaterial: job.authMaterial, now: input.now, antigravityModelGroup: input.antigravityModelGroup,
 			})
 			if err != nil {
@@ -115,7 +116,7 @@ func runProbeJobs(ctx context.Context, probers probeSet, input collectInput, job
 				}
 				job := jobs[index]
 				item, err := probers.probeAndRecord(runCtx, probeAndRecordInput{
-					store: input.store, strategy: job.strategy, provider: job.provider, credential: job.credential,
+					store: input.store, client: input.client, strategy: job.strategy, provider: job.provider, credential: job.credential,
 					accountID: job.accountID, authMaterial: job.authMaterial, now: input.now, antigravityModelGroup: input.antigravityModelGroup,
 				})
 				select {
@@ -181,7 +182,13 @@ func freshProbeNeeded(ctx context.Context, input collectInput, authIndex string,
 	if input.forceProbe {
 		return true, nil
 	}
-	return input.store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: authIndex, Provider: provider, ModelGroup: modelGroup, Now: input.now, Policy: probePolicy(input.cacheTTL)})
+	return input.store.NeedsProbe(ctx, state.ProbeCheck{
+		AuthIndex:  authIndex,
+		Provider:   provider,
+		ModelGroup: modelGroup,
+		Now:        input.now,
+		Policy:     probePolicyForProvider(provider, input.cacheTTL),
+	})
 }
 
 func probeModelGroup(provider core.Provider, modelGroup config.AntigravityModelGroup) string {
@@ -199,6 +206,7 @@ type probeSet struct {
 
 type probeAndRecordInput struct {
 	store                 *state.Store
+	client                *host.Client
 	strategy              core.StrategyName
 	provider              core.Provider
 	credential            core.Credential
@@ -214,8 +222,7 @@ func (p probeSet) probeAndRecord(ctx context.Context, input probeAndRecordInput)
 		return recordAntigravityProbeResult(ctx, input.store, result, input.now)
 	}
 	if input.strategy == core.StrategyXAI {
-		result := p.xai.Probe(ctx, xai.ProbeRequest{AuthIndex: input.credential.AuthIndex, AccessToken: input.authMaterial.accessToken, BaseURL: input.authMaterial.baseURL})
-		return recordXAIProbeResult(ctx, input.store, result, input.now)
+		return p.probeAndRecordXAI(ctx, input)
 	}
 	accountID := input.accountID
 	if accountID == "" {
@@ -223,6 +230,85 @@ func (p probeSet) probeAndRecord(ctx context.Context, input probeAndRecordInput)
 	}
 	result := p.codex.Probe(ctx, codex.ProbeRequest{Provider: input.provider, AuthIndex: input.credential.AuthIndex, AccountID: accountID, AccessToken: input.authMaterial.accessToken})
 	return recordCodexProbeResult(ctx, input.store, result, input.now)
+}
+
+func (p probeSet) probeAndRecordXAI(ctx context.Context, input probeAndRecordInput) (priority.ProbeEvidence, error) {
+	accessToken := input.authMaterial.accessToken
+	localExpired := xaiAuthMaterialLooksExpired(ctx, input.client, input.credential.AuthIndex, accessToken, input.now)
+	// 探测前：常规 refresh；本地 JWT/expired 已过期则强制 refresh 一次。
+	if token, ok := maybeRefreshXAIAuth(ctx, input.client, input.credential.AuthIndex, input.credential.Disabled, localExpired, input.now); ok {
+		accessToken = token
+		localExpired = xai.AccessTokenExpired(accessToken, input.now)
+	}
+	// Plan classification only (settings/billing/JWT). No multi-model chat probe.
+	plan := p.xai.FetchPlan(ctx, xai.PlanRequest{
+		AuthIndex:   input.credential.AuthIndex,
+		AccessToken: accessToken,
+		BaseURL:     input.authMaterial.baseURL,
+	})
+	// 401/凭证文案 或 本地已过期仍拿不到有效 plan：force refresh 一次后重拉 plan。
+	needForceRefresh := planLooksUnauthorized(plan) || (localExpired && plan.Source == "default_unfetchable")
+	if needForceRefresh {
+		if token, ok := maybeRefreshXAIAuth(ctx, input.client, input.credential.AuthIndex, input.credential.Disabled, true, input.now); ok {
+			accessToken = token
+			plan = p.xai.FetchPlan(ctx, xai.PlanRequest{
+				AuthIndex:   input.credential.AuthIndex,
+				AccessToken: accessToken,
+				BaseURL:     input.authMaterial.baseURL,
+			})
+			localExpired = xai.AccessTokenExpired(accessToken, input.now)
+		}
+		// force refresh 后仍鉴权失败，或本地仍过期且仍 unfetchable → 硬 AuthInvalid
+		if planLooksUnauthorized(plan) {
+			return recordXAIPlanResult(ctx, input.store, plan, input.now)
+		}
+		if localExpired && (plan.AuthFailed || plan.Source == "default_unfetchable" || plan.Source == "auth_failed") {
+			plan.AuthFailed = true
+			plan.PlanClass = xai.PlanClassUnknown
+			plan.PlanType = core.PlanTypeUnknown
+			plan.Source = "auth_failed"
+			if plan.Error == "" {
+				plan.Error = "local token expired after refresh"
+			}
+			if plan.HTTPStatus == 0 {
+				plan.HTTPStatus = 401
+			}
+		}
+	}
+	return recordXAIPlanResult(ctx, input.store, plan, input.now)
+}
+
+func planLooksUnauthorized(plan xai.PlanResult) bool {
+	if plan.AuthFailed {
+		return true
+	}
+	if xai.IsUnauthorizedProbe(plan.HTTPStatus, plan.Error) {
+		return true
+	}
+	return false
+}
+
+// xaiAuthMaterialLooksExpired 读取 auth JSON expired + JWT exp，判断本地凭证是否已过期。
+func xaiAuthMaterialLooksExpired(ctx context.Context, client *host.Client, authIndex, accessToken string, now time.Time) bool {
+	if xai.AccessTokenExpired(accessToken, now) {
+		return true
+	}
+	if client == nil || strings.TrimSpace(authIndex) == "" {
+		return false
+	}
+	raw, err := readCredentialAuthJSON(ctx, client, authIndex)
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	fields, err := xai.ParseAuthRefreshFields(raw)
+	if err != nil {
+		return false
+	}
+	token := accessToken
+	if token == "" {
+		token = fields.AccessToken
+	}
+	return xai.AuthMaterialExpired(token, fields.ExpiredAt, now)
 }
 
 func recordCodexProbeResult(ctx context.Context, store *state.Store, result codex.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
@@ -243,25 +329,3 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 	return priority.ProbeEvidence{Provider: core.ProviderAntigravity, AuthIndex: result.AuthIndex, ObservedAt: result.ObservedAt, ResetAt: result.ResetAt, Remaining: result.Remaining, LongWindowResetAt: result.LongWindowResetAt, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusReady, PlanType: result.PlanType, EvidenceFresh: true}, err
 }
 
-func recordXAIProbeResult(ctx context.Context, store *state.Store, result xai.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
-	if result.Status != xai.StatusReady || !result.QuotaKnown || result.ResetAt == nil || result.Remaining == nil {
-		err := store.MarkProbeFailure(ctx, state.ProbeFailure{AuthIndex: result.AuthIndex, Provider: core.ProviderXAI, ObservedAt: now, Err: errors.New(result.Error), NextProbeAt: now.Add(time.Hour)})
-		return priority.ProbeEvidence{Provider: core.ProviderXAI, AuthIndex: result.AuthIndex, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusProbeFailed, QuotaKnown: false}, err
-	}
-	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{AuthIndex: result.AuthIndex, Provider: core.ProviderXAI, ObservedAt: result.ObservedAt, ResetAt: *result.ResetAt, Remaining: int(*result.Remaining), Source: state.SourceFreshProbe, NextProbeAt: result.ObservedAt.Add(time.Hour)})
-	return priority.ProbeEvidence{
-		Provider:          core.ProviderXAI,
-		AuthIndex:         result.AuthIndex,
-		ObservedAt:        result.ObservedAt,
-		ResetAt:           result.ResetAt,
-		Remaining:         result.Remaining,
-		LongWindowResetAt: result.LongWindowResetAt,
-		Freshness:         result.Freshness,
-		ProbeStatus:       result.ProbeStatus,
-		Status:            priority.EvidenceStatusReady,
-		PlanType:          result.PlanType,
-		EvidenceFresh:     true,
-		XAIDepletedKind:   string(result.DepletedKind),
-		QuotaKnown:        true,
-	}, err
-}

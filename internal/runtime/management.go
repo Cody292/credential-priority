@@ -282,6 +282,12 @@ func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, erro
 			"auto_apply": cfg.AutoApply,
 			"enabled":    cfg.Enabled,
 		},
+		"usage_plugin": map[string]any{
+			"status":  "ready",
+			"method":  "usage.handle",
+			"scope":   "xai",
+			"purpose": "business_bypass_primary_signal",
+		},
 		"scheduler": map[string]any{
 			"interval":           cfg.Interval.String(),
 			"last_auto_apply_at": lastAuto,

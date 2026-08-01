@@ -85,6 +85,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		return r.registerManagement()
 	case "management.handle":
 		return r.handleManagement(ctx, request)
+	case "usage.handle":
+		return envelopeStatus(r.HandleUsage(ctx, request))
 	default:
 		return failure(fmt.Errorf("%w: method %q", ErrInvalidRequest, method))
 	}
@@ -171,13 +173,16 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata: Metadata{
 			Name:             config.PluginID,
-			Version:          "1.1.0",
+			Version:          "1.1.1",
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
 			ConfigFields:     configFields(),
 		},
-		Capabilities: map[string]bool{"management_api": true},
+		Capabilities: map[string]bool{
+			"management_api": true,
+			"usage_plugin":   true,
+		},
 	}
 }
 
@@ -200,7 +205,7 @@ func configFields() []ConfigField {
 		{Name: "priority_rules.codex.paid_depleted_disabled", Type: "boolean", Description: localizedDescription("Codex Plus/Pro/Team 耗尽时是否禁用。true=禁用，false=保持启用。默认 false。", "Disable Codex Plus/Pro/Team when depleted. true=disable, false=keep enabled. Default false."), DefaultValue: rules.Codex.PaidDepletedDisabled},
 		{Name: "priority_rules.xai.start_priority", Type: "integer", Description: localizedDescription("xAI 可用凭证起始优先级。默认 100。", "xAI start priority for available credentials. Default 100."), DefaultValue: rules.XAI.StartPriority},
 		{Name: "priority_rules.xai.free_depleted_priority", Type: "integer", Description: localizedDescription("xAI 免费额度耗尽时写入的优先级。默认 -1。", "Priority when xAI free usage is depleted. Default -1."), DefaultValue: rules.XAI.FreeDepletedPriority},
-		{Name: "priority_rules.xai.free_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 免费额度耗尽时是否禁用。默认 true。", "Disable when xAI free usage is depleted. Default true."), DefaultValue: rules.XAI.FreeDepletedDisabled},
+		{Name: "priority_rules.xai.free_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 免费额度耗尽时是否硬禁用。默认 false（软禁用：仅降 priority，不 PatchDisabled）。", "Hard-disable when xAI free usage is depleted. Default false (soft-disable: lower priority only, no PatchDisabled)."), DefaultValue: rules.XAI.FreeDepletedDisabled},
 		{Name: "priority_rules.xai.weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 仅周限额耗尽时写入的优先级。默认 -1。", "Priority when only xAI weekly limit is depleted. Default -1."), DefaultValue: rules.XAI.WeeklyDepletedPriority},
 		{Name: "priority_rules.xai.monthly_and_weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 周与月均耗尽时写入的优先级。默认 -1。", "Priority when xAI weekly and monthly are depleted. Default -1."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedPriority},
 		{Name: "priority_rules.xai.monthly_and_weekly_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 周与月均耗尽时是否禁用。默认 true。", "Disable when xAI weekly and monthly are depleted. Default true."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedDisabled},
