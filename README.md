@@ -43,7 +43,8 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
   -> 按 provider_scope（all 或 antigravity|codex|xai）筛选当前支持的提供商
        - Antigravity：按所选模型组探测剩余额度
        - Codex：按账号计划与额度状态探测可用性
-       - xAI：按本轮探测额度信号（免费/周/月）判定可用性
+       - xAI：FetchPlan（settings / billing / JWT）识别 free/paid；auto 不再 chat 多模型探额度
+            业务额度由 usage.handle 累计；连续 3 次额度类 429 → free 软禁用；401 AuthInvalid → 硬禁用
   -> 只使用本轮最新且可用的探测证据生成排序计划
   -> 根据运行模式决定是否写回
        - apply：通过 host.auth.save 写回优先级与启用状态
@@ -104,6 +105,13 @@ plugins:
           free_depleted_priority: -1
           free_depleted_disabled: true
           paid_depleted_disabled: false
+        xai:
+          start_priority: 100
+          free_depleted_priority: -1
+          free_depleted_disabled: false
+          weekly_depleted_priority: -1
+          monthly_and_weekly_depleted_priority: -1
+          monthly_and_weekly_depleted_disabled: true
 ```
 
 字段说明：
@@ -131,8 +139,31 @@ Codex 规则
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
 - `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
 - `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
+
+xAI 规则（v1.1.1）
+
+**套餐识别（FetchPlan）**
+
+- 通过 settings / billing / JWT tier 轻量分类套餐为 `free` 或 `paid`，**auto 不再**对 chat 多模型探额度。
+- 无法识别（网络失败、404、无套餐字段等）时**默认 `free`**；仅在明确付费 product/tier 时标 `paid`。
+- 排序时 **free 高优**：可参与排序的 free 凭证优先于 paid（优先消耗 free）。
+
+**free 额度与 24h 锚点**
+
+- 业务额度由宿主 `usage.handle` 累计，不依赖 chat 探测。
+- 连续 **3 次**额度类 429（如 `free-usage-exhausted` / rolling 24h tokens 等）→ `priority=-1` **软禁用**（仅降优先级）。
+- `free_depleted_disabled` 默认 `false`（软禁用，不硬 `disabled`）；显式设为 `true` 时才硬禁用。
+- 冷却锚点：`first_success_at + 24h`（若无成功记录则用第三次失败时刻 + 24h）；到期后可恢复高优。
+
+**401 AuthInvalid（硬禁用）**
+
+- OAuth force 刷新后仍 401 / 凭证失效文案 → `priority=-1` 且 `disabled=true` 硬禁用。
+- 硬禁用后需用户**重新登录**恢复；不计入 free 额度失败次数。
+
+**配置字段**
+
 - `priority_rules.xai.start_priority`：可用凭证的起始优先级，默认 `100`。
-- `priority_rules.xai.free_depleted_priority`：免费额度耗尽时写入的优先级，默认 `-1`。
+- `priority_rules.xai.free_depleted_priority`：免费额度耗尽（软禁用）时写入的优先级，默认 `-1`。
 - `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否硬禁用，默认 `false`（软禁用：仅降 priority）。
 - `priority_rules.xai.weekly_depleted_priority`：仅周限额耗尽时写入的优先级，默认 `-1`（不禁用）。
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`：周与月均耗尽时写入的优先级，默认 `-1`。

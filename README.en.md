@@ -37,7 +37,8 @@ Load plugin
   -> Filter currently supported providers by provider_scope (all or antigravity|codex|xai)
        - Antigravity: probe remaining quota for the selected model group
        - Codex: probe availability by account plan and quota state
-       - xAI: probe free / weekly / monthly quota signals in the current run
+       - xAI: FetchPlan (settings / billing / JWT) classifies free/paid; auto no longer multi-model chat probes
+            Business quota via usage.handle; 3 consecutive quota-class 429s → free soft-disable; 401 AuthInvalid → hard-disable
   -> Build a sorting plan only from fresh and ready evidence in this run
   -> Decide whether to write back by run mode
        - apply: write priority and enabled state through host.auth.save
@@ -98,6 +99,13 @@ plugins:
           free_depleted_priority: -1
           free_depleted_disabled: true
           paid_depleted_disabled: false
+        xai:
+          start_priority: 100
+          free_depleted_priority: -1
+          free_depleted_disabled: false
+          weekly_depleted_priority: -1
+          monthly_and_weekly_depleted_priority: -1
+          monthly_and_weekly_depleted_disabled: true
 ```
 
 | Field | Description |
@@ -123,8 +131,31 @@ Codex rules
 - `priority_rules.codex.free_depleted_priority`: priority for depleted Free credentials. Default: `-1`.
 - `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
 - `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
+
+xAI rules (v1.1.1)
+
+**Plan classification (FetchPlan)**
+
+- Classifies the plan as `free` or `paid` via settings / billing / JWT tier — **auto no longer** multi-model chat probes for quota.
+- Unfetchable results (network failure, 404, missing plan fields, etc.) default to **`free`**; only explicit paid product/tier signals mark **`paid`**.
+- **Free ranks first**: eligible free credentials sort above paid (consume free first).
+
+**Free quota and 24h anchor**
+
+- Business quota is accumulated from host `usage.handle`, not from chat probes.
+- **3 consecutive** quota-class 429s (e.g. `free-usage-exhausted` / rolling 24h tokens) → `priority=-1` **soft-disable** (lower priority only).
+- `free_depleted_disabled` defaults to `false` (soft-disable, no hard `disabled`); set `true` only for hard disable.
+- Cooldown anchor: `first_success_at + 24h` (or third failure time + 24h if no success yet); after that, high priority can resume.
+
+**401 AuthInvalid (hard disable)**
+
+- Still 401 / credential-invalid text after OAuth force refresh → `priority=-1` and `disabled=true` hard disable.
+- Requires user **re-login** to recover; does not count toward free quota failure streak.
+
+**Config fields**
+
 - `priority_rules.xai.start_priority`: start priority for available credentials. Default: `100`.
-- `priority_rules.xai.free_depleted_priority`: priority for free usage depleted. Default: `-1`.
+- `priority_rules.xai.free_depleted_priority`: priority when free usage is depleted (soft-disable). Default: `-1`.
 - `priority_rules.xai.free_depleted_disabled`: hard-disables free usage depleted credentials. Default: `false` (soft-disable: lower priority only).
 - `priority_rules.xai.weekly_depleted_priority`: priority when only weekly limit is depleted. Default: `-1` (not disabled).
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`: priority when monthly and weekly are depleted. Default: `-1`.
