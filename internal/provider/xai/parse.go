@@ -19,37 +19,25 @@ var (
 )
 
 // ParseProbeResponse 解析 xAI 上游探测 HTTP 状态与 body，产出安全额度信号。
+// model 为探测所用模型名：free 模型（名含 build-free）上的 spending-limit/out-of-credits
+// 在无 weekly 字样时按 free 24h 耗尽处理，避免把免费凭证永久锁成 monthly_and_weekly。
 // 仅当能从错误码/文案/用量字段得到可信额度结论时 QuotaKnown=true。
-func ParseProbeResponse(statusCode int, body []byte, observedAt time.Time) ProbeResult {
+func ParseProbeResponse(statusCode int, body []byte, observedAt time.Time, model string) ProbeResult {
 	observedAt = observedAt.UTC()
 	trimmed := strings.TrimSpace(string(body))
 	code, message := extractErrorFields(body)
 
 	if isFreeUsageExhausted(code, message, trimmed) {
-		actual, limit, ok := parseActualLimit(message + " " + trimmed)
-		remaining := int64(0)
-		if ok {
-			if actual < limit {
-				remaining = 0
-			}
-		}
-		resetAt := observedAt.Add(24 * time.Hour)
-		return ProbeResult{
-			ObservedAt:   observedAt,
-			ResetAt:      &resetAt,
-			Remaining:    &remaining,
-			Limit:        limitPtr(limit, ok),
-			Window:       WindowFree24h,
-			Freshness:    core.FreshnessFresh,
-			ProbeStatus:  core.ProbeStatusReady,
-			Status:       StatusReady,
-			PlanType:     core.PlanTypeFree,
-			DepletedKind: DepletedFree,
-			QuotaKnown:   true,
-		}
+		return freeDepletedResult(observedAt, message+" "+trimmed)
 	}
 
 	weekly := isWeeklyDepleted(code, message, trimmed)
+	// free 模型 + spending-limit/credits 阻断且无 weekly 字样 → free 24h 耗尽（可刷新启用）。
+	// 付费模型上的 spending-limit 仍走下方 monthly_and_weekly。
+	if isFreeProbeModel(model) && !weekly && isSpendingOrCreditsBlocked(code, message, trimmed) {
+		return freeDepletedResult(observedAt, message+" "+trimmed)
+	}
+
 	monthly := isMonthlyDepleted(code, message, trimmed)
 	// spending-limit / 月度积分耗尽在现网通常同时阻断可用调用；
 	// 若仅识别到 monthly 而未识别 weekly，仍按「周+月耗尽」处理（可禁用）。
@@ -235,6 +223,53 @@ func isFreeUsageExhausted(code, message, raw string) bool {
 		(strings.Contains(blob, "rolling 24-hour") && strings.Contains(blob, "tokens"))
 }
 
+// isFreeProbeModel：探测模型为 free 额度信号源（build-free / grok-build* / 显式 freeProbeModel）。
+func isFreeProbeModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return false
+	}
+	if m == freeProbeModel || m == legacyFreeProbeModel {
+		return true
+	}
+	return strings.Contains(m, "build-free") ||
+		strings.HasPrefix(m, "grok-build") ||
+		strings.Contains(m, "grok-build-")
+}
+
+// isSpendingOrCreditsBlocked：spending-limit / personal-team-blocked / out of credits 类阻断。
+func isSpendingOrCreditsBlocked(code, message, raw string) bool {
+	blob := strings.ToLower(code + " " + message + " " + raw)
+	return strings.Contains(blob, "spending-limit") ||
+		strings.Contains(blob, "personal-team-blocked") ||
+		strings.Contains(blob, "run out of credits") ||
+		strings.Contains(blob, "out of credits") ||
+		strings.Contains(blob, "credits exhausted")
+}
+
+// freeDepletedResult：free 24h 窗耗尽（ResetAt=+24h，DepletedFree）。
+func freeDepletedResult(observedAt time.Time, text string) ProbeResult {
+	actual, limit, ok := parseActualLimit(text)
+	remaining := int64(0)
+	if ok && actual < limit {
+		remaining = 0
+	}
+	resetAt := observedAt.Add(24 * time.Hour)
+	return ProbeResult{
+		ObservedAt:   observedAt,
+		ResetAt:      &resetAt,
+		Remaining:    &remaining,
+		Limit:        limitPtr(limit, ok),
+		Window:       WindowFree24h,
+		Freshness:    core.FreshnessFresh,
+		ProbeStatus:  core.ProbeStatusReady,
+		Status:       StatusReady,
+		PlanType:     core.PlanTypeFree,
+		DepletedKind: DepletedFree,
+		QuotaKnown:   true,
+	}
+}
+
 func isWeeklyDepleted(code, message, raw string) bool {
 	blob := strings.ToLower(code + " " + message + " " + raw)
 	if strings.Contains(blob, "free-usage") {
@@ -250,12 +285,8 @@ func isMonthlyDepleted(code, message, raw string) bool {
 	if strings.Contains(blob, "free-usage") {
 		return false
 	}
-	// 现网常见：personal-team-blocked:spending-limit / run out of credits
-	if strings.Contains(blob, "spending-limit") ||
-		strings.Contains(blob, "personal-team-blocked") ||
-		strings.Contains(blob, "run out of credits") ||
-		strings.Contains(blob, "out of credits") ||
-		strings.Contains(blob, "credits exhausted") {
+	// 付费模型路径：spending-limit / credits 阻断 → monthly（与 free 模型路径分流）。
+	if isSpendingOrCreditsBlocked(code, message, raw) {
 		return true
 	}
 	return strings.Contains(blob, "monthly") && (strings.Contains(blob, "exhaust") || strings.Contains(blob, "limit") || strings.Contains(blob, "credit") || strings.Contains(blob, "quota")) ||

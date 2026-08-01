@@ -32,7 +32,8 @@ func NewProber(hostAPI httpDoer, clockSource clock) Prober {
 }
 
 // Probe 绑定 AuthIndex，经 host.http.do 发送最小上游请求并解析额度信号。
-// 依次尝试 /responses 与 /chat/completions，以及固定小模型列表，优先采用 QuotaKnown 结果。
+// 仅正额度可立即返回。free/付费耗尽均缓存后换下一模型继续探测。
+// 最终优先级：positive > freeDepleted > paidDepleted > last。
 func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	observedAt := p.clock.Now().UTC()
 	baseURL := strings.TrimRight(strings.TrimSpace(request.BaseURL), "/")
@@ -42,6 +43,8 @@ func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	models := probeModels(request.Model)
 	var last ProbeResult
 	var lastStatus int
+	var freeDepleted *ProbeResult
+	var paidDepleted *ProbeResult
 	for _, model := range models {
 		for _, attempt := range probeAttempts(baseURL, model) {
 			response, err := p.host.HTTPDoRaw(ctx, host.HTTPRequest{
@@ -56,17 +59,46 @@ func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 				continue
 			}
 			lastStatus = response.StatusCode
-			result := ParseProbeResponse(response.StatusCode, response.Body, observedAt)
+			result := ParseProbeResponse(response.StatusCode, response.Body, observedAt, model)
 			result.Provider = core.ProviderXAI
 			result.AuthIndex = request.AuthIndex
-			if result.QuotaKnown && result.Status == StatusReady {
+			if !result.QuotaKnown || result.Status != StatusReady {
+				last = result
+				if last.Error == "" {
+					last.Error = safeError(fmt.Sprintf("xai probe status %d", response.StatusCode))
+				}
+				continue
+			}
+			if isPositiveQuota(result) {
 				return result
 			}
-			last = result
-			if last.Error == "" {
-				last.Error = safeError(fmt.Sprintf("xai probe status %d", response.StatusCode))
+			// free 耗尽：缓存后 break 当前模型 endpoint 循环，继续下一模型（如 grok 4.5 paid）。
+			if result.DepletedKind == DepletedFree {
+				if freeDepleted == nil {
+					copy := result
+					freeDepleted = &copy
+				}
+				last = result
+				break
 			}
+			if isPaidWindowDepleted(result) {
+				if paidDepleted == nil {
+					copy := result
+					paidDepleted = &copy
+				}
+				last = result
+				// 付费周/月耗尽：该模型不再试其它 endpoint，换下一模型。
+				break
+			}
+			last = result
 		}
+	}
+	// 优先级：positive 已 return；free 耗尽优先于付费窗口耗尽。
+	if freeDepleted != nil {
+		return *freeDepleted
+	}
+	if paidDepleted != nil {
+		return *paidDepleted
 	}
 	if last.AuthIndex == "" {
 		last = failedProbe(request, observedAt, fmt.Sprintf("xai probe status %d", lastStatus))
@@ -76,14 +108,38 @@ func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	return last
 }
 
+func isPositiveQuota(result ProbeResult) bool {
+	if result.DepletedKind != DepletedNone {
+		return false
+	}
+	return result.Remaining != nil && *result.Remaining > 0
+}
+
+// isPaidWindowDepleted：付费周/月耗尽不得短路，须继续试 free 模型。
+func isPaidWindowDepleted(result ProbeResult) bool {
+	switch result.DepletedKind {
+	case DepletedWeekly, DepletedMonthlyAndWeekly:
+		return true
+	default:
+		return result.WeeklyDepleted || result.MonthlyDepleted
+	}
+}
+
 type probeAttempt struct {
 	url  string
 	body []byte
 }
 
+// freeProbeModel 是 xAI 免费额度探测优先模型（现网有效：grok-build-0.1；
+// grok-4.5-build-free 已 404 not-found，仅作兼容别名探测）。
+const freeProbeModel = "grok-build-0.1"
+
+// legacyFreeProbeModel 历史 free 模型名（部分旧文案仍引用；探测顺序靠后）。
+const legacyFreeProbeModel = "grok-4.5-build-free"
+
 func probeModels(preferred string) []string {
 	preferred = strings.TrimSpace(preferred)
-	out := make([]string, 0, 2)
+	out := make([]string, 0, 4)
 	seen := map[string]struct{}{}
 	add := func(m string) {
 		m = strings.TrimSpace(m)
@@ -96,12 +152,11 @@ func probeModels(preferred string) []string {
 		seen[m] = struct{}{}
 		out = append(out, m)
 	}
-	// 收敛探测：默认非推理模型 + free 模型（用于 free-usage 信号）；避免多模型串行拖垮整轮自动排序。
+	// free 模型优先：现网 grok-build-0.1 可 2xx；再 legacy free 名；再 preferred / 付费默认。
+	add(freeProbeModel)
+	add(legacyFreeProbeModel)
 	add(preferred)
 	add(DefaultProbeModel)
-	if DefaultProbeModel != "grok-4.5-build-free" {
-		add("grok-4.5-build-free")
-	}
 	return out
 }
 
