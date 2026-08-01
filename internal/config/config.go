@@ -265,9 +265,10 @@ func defaultPriorityRules() PriorityRules {
 			PaidDepletedDisabled: false,
 		},
 		XAI: XAIPriorityRules{
-			StartPriority:                    100,
-			FreeDepletedPriority:             -1,
-			FreeDepletedDisabled:             true,
+			StartPriority:        100,
+			FreeDepletedPriority: -1,
+			// 方案 A：默认软禁用（仅降 priority），不 PatchDisabled。
+			FreeDepletedDisabled:             false,
 			WeeklyDepletedPriority:           -1,
 			MonthlyAndWeeklyDepletedPriority: -1,
 			MonthlyAndWeeklyDepletedDisabled: true,

@@ -127,7 +127,9 @@ func partitionCredentials(credentials []core.Credential) ([]core.Credential, []c
 	active := make([]core.Credential, 0, len(credentials))
 	disabled := make([]core.Credential, 0)
 	for _, credential := range credentials {
-		if credential.Disabled {
+		// 物理 disabled，或 soft-disabled（priority<0 且仍 enabled）走 DisabledGroups 低频探测，
+		// 避免 free depleted 软禁用账号按 CacheTTL/15min 狂探。
+		if credential.Disabled || credential.Priority < 0 {
 			disabled = append(disabled, credential)
 			continue
 		}

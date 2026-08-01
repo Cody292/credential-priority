@@ -112,7 +112,7 @@ const StatusHTML = `<!DOCTYPE html>
 <body>
     <div class="container">
         <div class="topbar">
-            <h1><span data-i18n="pageTitle">凭证优先级管理</span><span class="version-badge">v1.1.0</span></h1>
+            <h1><span data-i18n="pageTitle">凭证优先级管理</span><span class="version-badge">v1.1.1</span></h1>
             <div class="topbar-actions">
                 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
                 <div class="language-shell">
@@ -261,7 +261,7 @@ const StatusHTML = `<!DOCTYPE html>
         let credentialSummaryLoading=false;
         let pendingRunMode="apply";
         let runHistoryCache=[];
-        const defaultPriorityRuleConfig={enabled:false,antigravity:{start_priority:100},codex:{start_priority:100,free_depleted_priority:-1,free_depleted_disabled:true,paid_depleted_disabled:false},xai:{start_priority:100,free_depleted_priority:-1,free_depleted_disabled:true,weekly_depleted_priority:-1,monthly_and_weekly_depleted_priority:-1,monthly_and_weekly_depleted_disabled:true}};
+        const defaultPriorityRuleConfig={enabled:false,antigravity:{start_priority:100},codex:{start_priority:100,free_depleted_priority:-1,free_depleted_disabled:true,paid_depleted_disabled:false},xai:{start_priority:100,free_depleted_priority:-1,free_depleted_disabled:false,weekly_depleted_priority:-1,monthly_and_weekly_depleted_priority:-1,monthly_and_weekly_depleted_disabled:true}};
         function getProviderDisplayName(provider) {
             const lower = String(provider || "").trim().toLowerCase();
             const names = {"antigravity":"Antigravity","codex":"Codex","xai":"xAI","x-ai":"xAI"};
@@ -381,7 +381,7 @@ const StatusHTML = `<!DOCTYPE html>
             document.getElementById("resultModal").hidden=false;
         }
         function isFailedQuotaFetch(c){return c.reason==="failedQuotaFetch";}
-        function shouldShowChange(c){return (c.status==="success"&&c.priority_attempted)||(c.status==="success"&&c.disabled_attempted&&isFailedQuotaFetch(c))||c.status === "failed";}
+        function shouldShowChange(c){return (c.status==="success"&&c.priority_attempted)||(c.status==="success"&&c.disabled_attempted)||c.status === "failed";}
         function shouldShowRetry(c){return c.status === "failed"||isFailedQuotaFetch(c);}
         function retryCredentialQuota(c, button){const provider=String(c.provider||"").toLowerCase();runCredentialPriority("apply",provider?[provider]:[],button,c.retry_auth_index||"",true);}
         function openProviderModal(mode){if(credentialSummaryLoading){return;}pendingRunMode="apply";document.getElementById("providerModal").hidden=false;document.getElementById("modalNotice").textContent="";document.getElementById("modalNotice").className="message-box";const exec=document.getElementById("executePriorityButton");if(exec){exec.textContent=textFor("applyRun");}}
