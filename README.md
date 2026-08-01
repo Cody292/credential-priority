@@ -133,7 +133,7 @@ Codex 规则
 - `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
 - `priority_rules.xai.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.xai.free_depleted_priority`：免费额度耗尽时写入的优先级，默认 `-1`。
-- `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否禁用，默认 `true`。
+- `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否硬禁用，默认 `false`（软禁用：仅降 priority）。
 - `priority_rules.xai.weekly_depleted_priority`：仅周限额耗尽时写入的优先级，默认 `-1`（不禁用）。
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`：周与月均耗尽时写入的优先级，默认 `-1`。
 - `priority_rules.xai.monthly_and_weekly_depleted_disabled`：周与月均耗尽时是否禁用，默认 `true`。

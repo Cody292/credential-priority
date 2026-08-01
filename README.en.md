@@ -125,7 +125,7 @@ Codex rules
 - `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
 - `priority_rules.xai.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.xai.free_depleted_priority`: priority for free usage depleted. Default: `-1`.
-- `priority_rules.xai.free_depleted_disabled`: disables free usage depleted credentials. Default: `true`.
+- `priority_rules.xai.free_depleted_disabled`: hard-disables free usage depleted credentials. Default: `false` (soft-disable: lower priority only).
 - `priority_rules.xai.weekly_depleted_priority`: priority when only weekly limit is depleted. Default: `-1` (not disabled).
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`: priority when monthly and weekly are depleted. Default: `-1`.
 - `priority_rules.xai.monthly_and_weekly_depleted_disabled`: disables when monthly and weekly are depleted. Default: `true`.
