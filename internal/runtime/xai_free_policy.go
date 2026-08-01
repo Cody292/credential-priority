@@ -153,12 +153,3 @@ func writeXAIAuthInvalid(ctx context.Context, store *state.Store, authIndex stri
 		entry.XAIDepletedKind = ""
 	})
 }
-
-// nextEligibleFromFirstSuccess 计算锚点 A：first_success_at + 24h；无首次成功则用 fallback + 24h。
-func nextEligibleFromFirstSuccess(firstSuccessAt, fallback time.Time) time.Time {
-	anchor := firstSuccessAt
-	if anchor.IsZero() {
-		anchor = fallback
-	}
-	return anchor.UTC().Add(xaiFreeCooldown)
-}

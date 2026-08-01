@@ -48,13 +48,6 @@ func maybeRefreshXAIAuth(
 	return access, true
 }
 
-func xaiProbeLooksUnauthorized(result xai.ProbeResult) bool {
-	if result.Status == xai.StatusReady && result.QuotaKnown {
-		return false
-	}
-	return xai.IsUnauthorizedProbe(0, result.Error)
-}
-
 func refreshMetaFromJSON(raw json.RawMessage) (disabled bool, lastRefresh time.Time, expiredAt time.Time, hasRefreshToken bool) {
 	fields, err := xai.ParseAuthRefreshFields(raw)
 	if err != nil {
