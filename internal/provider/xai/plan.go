@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,14 +209,12 @@ func extractTierLike(payload map[string]any) string {
 	keys := []string{"tier", "plan", "plan_type", "planType", "subscription", "product", "sku", "name"}
 	for _, key := range keys {
 		if v, ok := payload[key]; ok {
-			switch t := v.(type) {
-			case string:
-				if s := strings.TrimSpace(t); s != "" {
+			if s := anyToTierString(v); s != "" {
+				return s
+			}
+			if nested, ok := v.(map[string]any); ok {
+				if s := extractTierLike(nested); s != "" {
 					return s
-				}
-			case map[string]any:
-				if nested := extractTierLike(t); nested != "" {
-					return nested
 				}
 			}
 		}
@@ -231,10 +230,54 @@ func extractTierLike(payload map[string]any) string {
 	return ""
 }
 
+// anyToTierString 将 JWT/JSON 中的 tier 值规范为字符串。
+// 现网 SuperGrok 发 `"tier": 1`（数字）；encoding/json 默认解成 float64。
+func anyToTierString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case json.Number:
+		return strings.TrimSpace(t.String())
+	case float64:
+		// JSON number → 整数字符串（1.0 → "1"），避免 "1.000000"
+		if t == float64(int64(t)) {
+			return strconv.FormatInt(int64(t), 10)
+		}
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case float32:
+		f := float64(t)
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 32)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case int32:
+		return strconv.FormatInt(int64(t), 10)
+	case uint64:
+		return strconv.FormatUint(t, 10)
+	default:
+		return ""
+	}
+}
+
 func classifyTierToken(tier string) (PlanClass, bool) {
 	t := strings.ToLower(strings.TrimSpace(tier))
 	if t == "" {
 		// Empty is not an explicit tier; caller falls through to default_unfetchable=free.
+		return "", false
+	}
+	// 数字 tier：≥1 → Paid（SuperGrok 等）；0 → Free
+	if n, err := strconv.ParseInt(t, 10, 64); err == nil {
+		if n >= 1 {
+			return PlanClassPaid, true
+		}
+		if n == 0 {
+			return PlanClassFree, true
+		}
+		// 负数不视为合法套餐信号
 		return "", false
 	}
 	if hasPaidPlanSignal(t) {
@@ -369,6 +412,7 @@ func planHeaders(request PlanRequest) host.Header {
 }
 
 // jwtTierClaim 从 access token payload 提取 tier/plan（不校验签名，仅分类）。
+// 支持 string / float64 / json.Number / int 等数字 tier（现网 SuperGrok `"tier":1`）。
 func jwtTierClaim(accessToken string) string {
 	parts := strings.Split(strings.TrimSpace(accessToken), ".")
 	if len(parts) < 2 {
@@ -387,10 +431,8 @@ func jwtTierClaim(accessToken string) string {
 		return ""
 	}
 	for _, key := range []string{"tier", "plan", "plan_type", "subscription_tier", "xai_tier"} {
-		if v, ok := claims[key].(string); ok {
-			if s := strings.TrimSpace(v); s != "" {
-				return s
-			}
+		if s := anyToTierString(claims[key]); s != "" {
+			return s
 		}
 	}
 	return ""
