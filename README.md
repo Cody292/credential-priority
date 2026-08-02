@@ -140,7 +140,7 @@ Codex 规则
 - `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
 - `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
 
-xAI 规则（v1.1.1）
+xAI 规则（v1.1.2）
 
 **套餐识别（FetchPlan）**
 

@@ -132,7 +132,7 @@ Codex rules
 - `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
 - `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
 
-xAI rules (v1.1.1)
+xAI rules (v1.1.2)
 
 **Plan classification (FetchPlan)**
 
