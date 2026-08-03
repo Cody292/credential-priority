@@ -173,7 +173,7 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata: Metadata{
 			Name:             config.PluginID,
-			Version:          "1.1.2",
+			Version:          "1.1.3",
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
@@ -206,6 +206,7 @@ func configFields() []ConfigField {
 		{Name: "priority_rules.xai.start_priority", Type: "integer", Description: localizedDescription("xAI 可用凭证起始优先级。默认 100。", "xAI start priority for available credentials. Default 100."), DefaultValue: rules.XAI.StartPriority},
 		{Name: "priority_rules.xai.free_depleted_priority", Type: "integer", Description: localizedDescription("xAI 免费额度耗尽时写入的优先级。默认 -1。", "Priority when xAI free usage is depleted. Default -1."), DefaultValue: rules.XAI.FreeDepletedPriority},
 		{Name: "priority_rules.xai.free_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 免费额度耗尽时是否硬禁用。默认 false（软禁用：仅降 priority，不 PatchDisabled）。", "Hard-disable when xAI free usage is depleted. Default false (soft-disable: lower priority only, no PatchDisabled)."), DefaultValue: rules.XAI.FreeDepletedDisabled},
+		{Name: "priority_rules.xai.free_participates_priority", Type: "boolean", Description: localizedDescription("Free 凭证是否参与优先级排序。默认 false（仅保留 429 耗尽/冷却/401）；显式 true 才 opt-in free-first。", "Whether Free credentials participate in priority sorting. Default false (keep 429 depletion/cooldown/401 only); set true to opt in free-first."), DefaultValue: rules.XAI.FreeParticipatesPriority},
 		{Name: "priority_rules.xai.weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 仅周限额耗尽时写入的优先级。默认 -1。", "Priority when only xAI weekly limit is depleted. Default -1."), DefaultValue: rules.XAI.WeeklyDepletedPriority},
 		{Name: "priority_rules.xai.monthly_and_weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 周与月均耗尽时写入的优先级。默认 -1。", "Priority when xAI weekly and monthly are depleted. Default -1."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedPriority},
 		{Name: "priority_rules.xai.monthly_and_weekly_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 周与月均耗尽时是否禁用。默认 true。", "Disable when xAI weekly and monthly are depleted. Default true."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedDisabled},

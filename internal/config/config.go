@@ -77,9 +77,11 @@ type CodexPriorityRules struct {
 
 // XAIPriorityRules 是 xAI 排序规则的可配置部分。
 type XAIPriorityRules struct {
-	StartPriority                    int
-	FreeDepletedPriority             int
-	FreeDepletedDisabled             bool
+	StartPriority        int
+	FreeDepletedPriority int
+	FreeDepletedDisabled bool
+	// FreeParticipatesPriority：true 时 free 参与正优先级/free-first；false（默认）时仅保留耗尽/冷却/401。
+	FreeParticipatesPriority         bool
 	WeeklyDepletedPriority           int
 	MonthlyAndWeeklyDepletedPriority int
 	MonthlyAndWeeklyDepletedDisabled bool
@@ -135,6 +137,7 @@ type rawXAIPriority struct {
 	StartPriority                    *int  `json:"start_priority"`
 	FreeDepletedPriority             *int  `json:"free_depleted_priority"`
 	FreeDepletedDisabled             *bool `json:"free_depleted_disabled"`
+	FreeParticipatesPriority         *bool `json:"free_participates_priority"`
 	WeeklyDepletedPriority           *int  `json:"weekly_depleted_priority"`
 	MonthlyAndWeeklyDepletedPriority *int  `json:"monthly_and_weekly_depleted_priority"`
 	MonthlyAndWeeklyDepletedDisabled *bool `json:"monthly_and_weekly_depleted_disabled"`
@@ -268,7 +271,9 @@ func defaultPriorityRules() PriorityRules {
 			StartPriority:        100,
 			FreeDepletedPriority: -1,
 			// 方案 A：默认软禁用（仅降 priority），不 PatchDisabled。
-			FreeDepletedDisabled:             false,
+			FreeDepletedDisabled: false,
+			// Free 默认不参与正优先级排序；显式 free_participates_priority: true 才 opt-in。
+			FreeParticipatesPriority:         false,
 			WeeklyDepletedPriority:           -1,
 			MonthlyAndWeeklyDepletedPriority: -1,
 			MonthlyAndWeeklyDepletedDisabled: true,
@@ -482,6 +487,9 @@ func (raw rawXAIPriority) apply(rule XAIPriorityRules) (XAIPriorityRules, error)
 	}
 	if raw.FreeDepletedDisabled != nil {
 		rule.FreeDepletedDisabled = *raw.FreeDepletedDisabled
+	}
+	if raw.FreeParticipatesPriority != nil {
+		rule.FreeParticipatesPriority = *raw.FreeParticipatesPriority
 	}
 	if raw.WeeklyDepletedPriority != nil {
 		rule.WeeklyDepletedPriority = *raw.WeeklyDepletedPriority

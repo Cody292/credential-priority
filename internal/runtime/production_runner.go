@@ -552,6 +552,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		paidDepletedDisabled := cfg.PriorityRules.Codex.PaidDepletedDisabled
 		xaiFreePriority := cfg.PriorityRules.XAI.FreeDepletedPriority
 		xaiFreeDisabled := cfg.PriorityRules.XAI.FreeDepletedDisabled
+		xaiFreeParticipates := cfg.PriorityRules.XAI.FreeParticipatesPriority
 		xaiWeeklyPriority := cfg.PriorityRules.XAI.WeeklyDepletedPriority
 		xaiMonthlyWeeklyPriority := cfg.PriorityRules.XAI.MonthlyAndWeeklyDepletedPriority
 		xaiMonthlyWeeklyDisabled := cfg.PriorityRules.XAI.MonthlyAndWeeklyDepletedDisabled
@@ -565,6 +566,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		options.CodexPaidDepletedDisabled = &paidDepletedDisabled
 		options.XAIFreeDepletedPriority = &xaiFreePriority
 		options.XAIFreeDepletedDisabled = &xaiFreeDisabled
+		options.XAIFreeParticipatesPriority = &xaiFreeParticipates
 		options.XAIWeeklyDepletedPriority = &xaiWeeklyPriority
 		options.XAIMonthlyAndWeeklyDepletedPriority = &xaiMonthlyWeeklyPriority
 		options.XAIMonthlyAndWeeklyDepletedDisabled = &xaiMonthlyWeeklyDisabled

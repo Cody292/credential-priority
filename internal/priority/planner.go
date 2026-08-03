@@ -10,14 +10,16 @@ import (
 
 // Options 是 fresh-only 优先级规划器的已解析策略参数。
 type Options struct {
-	Now                                 time.Time
-	MaxPriority                         int
-	StartPriorityByProvider             map[core.Provider]int
-	CodexFreeDepletedPriority           *int
-	CodexFreeDepletedDisabled           *bool
-	CodexPaidDepletedDisabled           *bool
-	XAIFreeDepletedPriority             *int
-	XAIFreeDepletedDisabled             *bool
+	Now                       time.Time
+	MaxPriority               int
+	StartPriorityByProvider   map[core.Provider]int
+	CodexFreeDepletedPriority *int
+	CodexFreeDepletedDisabled *bool
+	CodexPaidDepletedDisabled *bool
+	XAIFreeDepletedPriority   *int
+	XAIFreeDepletedDisabled   *bool
+	// XAIFreeParticipatesPriority：true 时 free 参与正优先级/free-first/uniqueness；nil/false（默认）时仅保留耗尽/冷却/401 链。
+	XAIFreeParticipatesPriority         *bool
 	XAIWeeklyDepletedPriority           *int
 	XAIMonthlyAndWeeklyDepletedPriority *int
 	XAIMonthlyAndWeeklyDepletedDisabled *bool
@@ -332,6 +334,22 @@ func xaiFreeDepletedDisabled(options Options) bool {
 	return *options.XAIFreeDepletedDisabled
 }
 
+// xaiFreeParticipatesPriority 默认 false：free 不参与正优先级提升与 free-first；显式 true 才 opt-in。
+func xaiFreeParticipatesPriority(options Options) bool {
+	if options.XAIFreeParticipatesPriority == nil {
+		return false
+	}
+	return *options.XAIFreeParticipatesPriority
+}
+
+// isXAIFreePlanItem 识别 xAI free/unknown 套餐（不含 paid）。
+func isXAIFreePlanItem(item PlanItem) bool {
+	if planItemProvider(item) != core.ProviderXAI {
+		return false
+	}
+	return item.PlanType == core.PlanTypeFree || item.PlanType == core.PlanTypeUnknown
+}
+
 func xaiWeeklyDepletedPriority(options Options) int {
 	if options.XAIWeeklyDepletedPriority == nil {
 		return -1
@@ -382,6 +400,10 @@ func ensureUniqueProviderPriorities(items []PlanItem, options Options) {
 	groups := make(map[core.Provider][]int)
 	for index, item := range items {
 		if item.Disabled || item.Priority < 1 {
+			continue
+		}
+		// free_participates_priority=false：xAI free 不参与 uniqueness 重排。
+		if !xaiFreeParticipatesPriority(options) && isXAIFreePlanItem(item) {
 			continue
 		}
 		// 仅当本轮至少有一条同 provider 的 fresh 正额度证据时，才触发去重写回，
@@ -522,6 +544,10 @@ func positiveCandidates(items []PlanItem, options Options) []int {
 		if !item.EvidenceFresh || item.Remaining == nil {
 			continue
 		}
+		// free_participates_priority=false：xAI free 不进正优先级提升。
+		if !xaiFreeParticipatesPriority(options) && isXAIFreePlanItem(item) {
+			continue
+		}
 		if *item.Remaining > 0 {
 			candidates = append(candidates, index)
 			continue
@@ -541,8 +567,8 @@ func positiveCandidates(items []PlanItem, options Options) []int {
 func compareCandidates(left PlanItem, right PlanItem, options Options) int {
 	// xAI: free eligible ranks above paid; then remaining, reset, AuthIndex.
 	if planItemProvider(left) == core.ProviderXAI || planItemProvider(right) == core.ProviderXAI {
-		leftFree := isXAIFreeEligibleItem(left)
-		rightFree := isXAIFreeEligibleItem(right)
+		leftFree := isXAIFreeEligibleItem(left, options)
+		rightFree := isXAIFreeEligibleItem(right, options)
 		switch {
 		case leftFree && !rightFree:
 			return -1
@@ -581,7 +607,11 @@ func paidRank(planType core.PlanType) int {
 }
 
 // isXAIFreeEligibleItem: free plan with positive remaining (or unknown remaining) ranks high.
-func isXAIFreeEligibleItem(item PlanItem) bool {
+// free_participates_priority=false 时永不视为 free-first 候选。
+func isXAIFreeEligibleItem(item PlanItem, options Options) bool {
+	if !xaiFreeParticipatesPriority(options) {
+		return false
+	}
 	if planItemProvider(item) != core.ProviderXAI {
 		return false
 	}
