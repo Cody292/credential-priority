@@ -47,6 +47,7 @@ type Entry struct {
 	FirstSuccessAt  time.Time `json:"first_success_at,omitempty"`  // 首次成功调用锚点 A
 	NextEligibleAt  time.Time `json:"next_eligible_at,omitempty"`  // free 冷却到期时刻
 	XAIDepletedKind string    `json:"xai_depleted_kind,omitempty"` // free | weekly | monthly_and_weekly
+	QuotaFailTimes  []time.Time `json:"quota_fail_times,omitempty"` // xAI 429 失败时间戳队列
 }
 
 // ProbePolicy 定义状态缓存何时必须重新 fresh probe。
@@ -80,6 +81,7 @@ type ProbeSuccess struct {
 	FirstSuccessAt  time.Time
 	NextEligibleAt  time.Time
 	XAIDepletedKind string
+	QuotaFailTimes  []time.Time
 	// PreserveXAIPolicy：true 时合并已有 xAI 策略字段（仅当入参零值）。
 	PreserveXAIPolicy bool
 }
@@ -196,6 +198,7 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		FirstSuccessAt:  utcOrZero(success.FirstSuccessAt),
 		NextEligibleAt:  utcOrZero(success.NextEligibleAt),
 		XAIDepletedKind: success.XAIDepletedKind,
+		QuotaFailTimes:  utcTimes(success.QuotaFailTimes),
 	}
 	if success.PreserveXAIPolicy {
 		if entry.PlanClass == "" {
@@ -209,6 +212,9 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		}
 		if entry.XAIDepletedKind == "" {
 			entry.XAIDepletedKind = prev.XAIDepletedKind
+		}
+		if len(entry.QuotaFailTimes) == 0 {
+			entry.QuotaFailTimes = prev.QuotaFailTimes
 		}
 		// QuotaFailCount 以 success 为准（调用方显式传入，含清零）。
 	}
@@ -246,6 +252,17 @@ func utcOrZero(t time.Time) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
+}
+
+func utcTimes(ts []time.Time) []time.Time {
+	if len(ts) == 0 {
+		return nil
+	}
+	res := make([]time.Time, len(ts))
+	for i, t := range ts {
+		res[i] = t.UTC()
+	}
+	return res
 }
 
 // MarkProbeFailure 写入 probe 失败后的脱敏错误与下次探测时间。

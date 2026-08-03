@@ -94,7 +94,7 @@ func applyXAIUsageToStore(ctx context.Context, store *state.Store, rec usageReco
 	case usageDecisionFreeDepleted:
 		next := applyXAIQuotaFailure(prev, now)
 		// Below threshold: only accumulate fail_count, keep remaining if positive.
-		if next.QuotaFailCount < xaiQuotaFailThreshold {
+		if next.QuotaFailCount < xaiQuotaFailWindowThreshold {
 			if prev.Remaining > 0 {
 				next.Remaining = prev.Remaining
 			}
@@ -157,15 +157,10 @@ func classifyXAIUsage(rec usageRecord, now time.Time) usageDecision {
 		return usageDecision{kind: usageDecisionIgnore}
 	}
 
-	// free-usage-exhausted / rolling 24h tokens / actual/limit quota-class 429.
-	if isUsageQuotaExhausted(code, message, raw, status) {
+	// 任何 429 均计入（不再像之前那样过滤额度关键字）
+	if status == 429 {
 		resetAt := now.Add(24 * time.Hour)
 		return usageDecision{kind: usageDecisionFreeDepleted, resetAt: &resetAt}
-	}
-
-	// Ordinary 429 without quota text: ignore.
-	if status == 429 {
-		return usageDecision{kind: usageDecisionIgnore}
 	}
 
 	// Success: positive remaining + clear fail_count.

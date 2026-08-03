@@ -11,9 +11,11 @@ import (
 
 // xAI free 策略常量（用户拍板）。
 const (
-	xaiQuotaFailThreshold = 3
-	xaiFreeCooldown       = 24 * time.Hour
-	xaiAuthInvalidReason  = "xai auth invalid"
+	xaiQuotaFailThreshold       = 3
+	xaiQuotaFailWindowThreshold = 2
+	xaiQuotaFailWindow          = 30 * time.Minute
+	xaiFreeCooldown             = 24 * time.Hour
+	xaiAuthInvalidReason        = "xai auth invalid"
 )
 
 // xaiPolicySnapshot 是 store 中 xAI free 策略的可读快照。
@@ -27,6 +29,7 @@ type xaiPolicySnapshot struct {
 	Remaining       int
 	ResetAt         time.Time
 	ObservedAt      time.Time
+	QuotaFailTimes  []time.Time
 }
 
 func loadXAIPolicy(store *state.Store, authIndex string) xaiPolicySnapshot {
@@ -44,20 +47,35 @@ func loadXAIPolicy(store *state.Store, authIndex string) xaiPolicySnapshot {
 		Remaining:       entry.Remaining,
 		ResetAt:         entry.ResetAt,
 		ObservedAt:      entry.ObservedAt,
+		QuotaFailTimes:  entry.QuotaFailTimes,
 	}
 }
 
 // applyXAIQuotaFailure 处理额度类失败（429 free-exhausted 等）。
-// 连续 3 次 → soft priority=-1；锚点 A：first_success_at+24h，无则用第三次失败时刻+24h。
-// 返回更新后的策略与是否应产出 depleted evidence。
+// 30分钟窗口内累计 2 次 429 即判 free 额度耗尽（触发 depleted，priority=-1）。
 func applyXAIQuotaFailure(prev xaiPolicySnapshot, now time.Time) xaiPolicySnapshot {
 	next := prev
-	next.QuotaFailCount = prev.QuotaFailCount + 1
 	next.ObservedAt = now.UTC()
 	if next.PlanClass == "" {
 		next.PlanClass = string(xai.PlanClassFree)
 	}
-	if next.QuotaFailCount >= xaiQuotaFailThreshold {
+
+	// 1. 清理超过 30 分钟的旧时间戳
+	cutoff := now.Add(-xaiQuotaFailWindow)
+	var activeTimes []time.Time
+	for _, t := range prev.QuotaFailTimes {
+		if t.After(cutoff) {
+			activeTimes = append(activeTimes, t)
+		}
+	}
+
+	// 2. 加入当前失败时间戳
+	activeTimes = append(activeTimes, now.UTC())
+	next.QuotaFailTimes = activeTimes
+	next.QuotaFailCount = len(activeTimes)
+
+	// 3. 累计达到阈值则触发 depleted
+	if len(activeTimes) >= xaiQuotaFailWindowThreshold {
 		next.XAIDepletedKind = string(xai.DepletedFree)
 		next.Remaining = 0
 		anchor := next.FirstSuccessAt
@@ -74,6 +92,7 @@ func applyXAIQuotaFailure(prev xaiPolicySnapshot, now time.Time) xaiPolicySnapsh
 func applyXAISuccess(prev xaiPolicySnapshot, now time.Time) xaiPolicySnapshot {
 	next := prev
 	next.QuotaFailCount = 0
+	next.QuotaFailTimes = nil // 成功调用立即清零
 	next.XAIDepletedKind = ""
 	next.Remaining = 1
 	next.ObservedAt = now.UTC()
@@ -136,6 +155,7 @@ func writeXAIPolicy(ctx context.Context, store *state.Store, authIndex string, s
 		FirstSuccessAt:  snap.FirstSuccessAt,
 		NextEligibleAt:  snap.NextEligibleAt,
 		XAIDepletedKind: snap.XAIDepletedKind,
+		QuotaFailTimes:  snap.QuotaFailTimes,
 	})
 }
 
