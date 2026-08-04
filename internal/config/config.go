@@ -18,12 +18,19 @@ const (
 	DynamicLibraryBaseName = "credential-priority"
 	// CPAConfigKey 是 `plugins.configs` 下该插件的配置键。
 	CPAConfigKey = "credential-priority"
+	// DefaultStateCachePath 是探测状态缓存落盘路径（包内常量，不可配置）。
+	DefaultStateCachePath = DirectoryName + "/refresh-cache.json"
 )
 
 // ErrInvalidConfig 标识配置解析或校验失败。
 var ErrInvalidConfig = errors.New("config: invalid")
 
 // Config 是插件自有配置的已校验形态。
+//
+// Enabled 为顶层插件开关；PriorityRules.Enabled 为自定义排序规则开关，二者语义独立。
+// DisabledGroupSize / DisabledProbeInterval 仍可从旧配置解析进字段，但不再驱动探测调度
+//（调度使用 Interval 与 ActiveGroupSize）。
+// 探测缓存路径与 freshness TTL 为包内常量，不暴露为可配置字段。
 type Config struct {
 	Enabled               bool
 	AutoApply             bool
@@ -37,10 +44,10 @@ type Config struct {
 	TopPriorityProbeCount int
 	ActiveGroupSize       int
 	ActiveGroupJitter     time.Duration
-	DisabledGroupSize     int
+	// DisabledGroupSize 兼容旧键 disabled_group_size；不再驱动调度。
+	DisabledGroupSize int
+	// DisabledProbeInterval 兼容旧键 disabled_probe_interval；不再驱动 1h 冷冻调度。
 	DisabledProbeInterval time.Duration
-	CacheTTL              time.Duration
-	CachePath             string
 	ProviderOverrides     map[string]ProviderOverride
 	PriorityRules         PriorityRules
 }
@@ -247,10 +254,10 @@ func Default() Config {
 		TopPriorityProbeCount: 10,
 		ActiveGroupSize:       10,
 		ActiveGroupJitter:     10 * time.Minute,
+		// DisabledGroupSize / DisabledProbeInterval：保留字段以兼容旧配置解析；
+		// 不再作为默认 1h 冷冻调度语义（调度改用 Interval + ActiveGroupSize）。
 		DisabledGroupSize:     5,
-		DisabledProbeInterval: 1 * time.Hour,
-		CacheTTL:              15 * time.Minute,
-		CachePath:             DirectoryName + "/refresh-cache.json",
+		DisabledProbeInterval: 0,
 		PriorityRules:         defaultPriorityRules(),
 	}
 }
@@ -297,8 +304,17 @@ func decodeRaw(data []byte) (rawConfig, error) {
 	}
 	var raw rawConfig
 	if trimmed[0] == '{' {
-		if err := json.NewDecoder(bytes.NewReader(trimmed)).Decode(&raw); err != nil {
+		var generic map[string]any
+		if err := json.Unmarshal(trimmed, &generic); err != nil {
 			return rawConfig{}, invalid("config", "json", "must be valid JSON")
+		}
+		normalizePriorityRulesKeys(generic)
+		encoded, err := json.Marshal(generic)
+		if err != nil {
+			return rawConfig{}, invalid("config", "json", "must be encodable")
+		}
+		if err := json.Unmarshal(encoded, &raw); err != nil {
+			return rawConfig{}, invalid("config", err.Error(), "must match config schema")
 		}
 		return raw, nil
 	}

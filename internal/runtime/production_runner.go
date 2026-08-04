@@ -24,6 +24,8 @@ var errMissingHostCallbacks = errors.New("runtime: host callbacks are required")
 const (
 	autoQuotaProbeAttempts = 3
 	autoQuotaProbeDelay    = 10 * time.Second
+	// defaultProbeCacheTTL 是非 xAI 探测证据 freshness（包内常量，不可配置）。
+	defaultProbeCacheTTL = 15 * time.Minute
 )
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
@@ -43,7 +45,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	store, err := state.Load(ctx, request.Config.CachePath)
+	store, err := state.Load(ctx, config.DefaultStateCachePath)
 	if err != nil {
 		return err
 	}
@@ -51,7 +53,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials, now: now, cacheTTL: request.Config.CacheTTL, forceProbe: request.Trigger == TriggerManualApply, maxConcurrency: request.Config.MaxConcurrency, antigravityModelGroup: request.Config.AntigravityModelGroup}, request.Trigger)
+	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials, now: now, cacheTTL: defaultProbeCacheTTL, forceProbe: request.Trigger == TriggerManualApply, maxConcurrency: request.Config.MaxConcurrency, antigravityModelGroup: request.Config.AntigravityModelGroup}, request.Trigger)
 	if err != nil {
 		return err
 	}
@@ -114,7 +116,7 @@ func (r *Runtime) runAutoParallelProviders(ctx context.Context, request TaskRequ
 	if err != nil {
 		return err
 	}
-	store, err := state.Load(ctx, request.Config.CachePath)
+	store, err := state.Load(ctx, config.DefaultStateCachePath)
 	if err != nil {
 		return err
 	}
@@ -154,7 +156,7 @@ func (r *Runtime) runAutoParallelProviders(ctx context.Context, request TaskRequ
 			}
 			evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{
 				client: client, store: store, probes: probes, accountIDs: accountIDs, authMaterials: authMaterials,
-				now: now, cacheTTL: request.Config.CacheTTL, forceProbe: false,
+				now: now, cacheTTL: defaultProbeCacheTTL, forceProbe: false,
 				maxConcurrency: request.Config.MaxConcurrency, antigravityModelGroup: request.Config.AntigravityModelGroup,
 			}, TriggerAutoApply)
 			if err != nil {
@@ -541,11 +543,20 @@ func credentialsFromAuthFiles(files []host.AuthFile) ([]core.Credential, map[str
 }
 
 func scheduleOptions(cfg config.Config, now time.Time) schedule.Options {
-	return schedule.Options{Clock: fixedClock{now: now}, RNG: realRNG{}, ImmediateProbeLimit: cfg.ImmediateProbeLimit, TopPriorityProbeCount: cfg.TopPriorityProbeCount, ActiveGroupSize: cfg.ActiveGroupSize, ActiveGroupJitter: cfg.ActiveGroupJitter, DisabledGroupSize: cfg.DisabledGroupSize, DisabledProbeInterval: cfg.DisabledProbeInterval}
+	// disabled 分批改用 Interval + ActiveGroupSize；不再传入有效 DisabledProbeInterval。
+	return schedule.Options{
+		Clock:                 fixedClock{now: now},
+		RNG:                   realRNG{},
+		ImmediateProbeLimit:   cfg.ImmediateProbeLimit,
+		TopPriorityProbeCount: cfg.TopPriorityProbeCount,
+		ActiveGroupSize:       cfg.ActiveGroupSize,
+		ActiveGroupJitter:     cfg.ActiveGroupJitter,
+		Interval:              cfg.Interval,
+	}
 }
 
 func priorityOptions(cfg config.Config, now time.Time) priority.Options {
-	options := priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 5 * time.Hour, ResetBoost: 50}
+	options := priority.Options{Now: now, MaxPriority: 100, MinChange: cfg.MinChange, PaidFirst: true, ResetBoostWithin: 24 * time.Hour, ResetBoost: 50}
 	if cfg.PriorityRules.Enabled {
 		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
 		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled
@@ -578,8 +589,8 @@ func probePolicy(cacheTTL time.Duration) state.ProbePolicy {
 	return state.ProbePolicy{TTL: cacheTTL, ResetStaleAfter: time.Hour}
 }
 
-// probePolicyForProvider：xAI 使用 24h CacheTTL，避免默认 15m TTL 覆盖 NextProbeAt 导致狂探。
-// 其它 provider 保持配置 CacheTTL（默认 15m）。
+// probePolicyForProvider：xAI 使用 24h TTL，避免默认 15m 覆盖 NextProbeAt 导致狂探。
+// 其它 provider 使用包内常量 defaultProbeCacheTTL（15m）。
 func probePolicyForProvider(provider core.Provider, cacheTTL time.Duration) state.ProbePolicy {
 	if provider == core.ProviderXAI {
 		return state.ProbePolicy{TTL: xaiPositiveProbeInterval, ResetStaleAfter: time.Hour}

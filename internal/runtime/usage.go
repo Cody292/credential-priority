@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"credential-priority/internal/config"
 	"credential-priority/internal/core"
 	"credential-priority/internal/provider/xai"
 	"credential-priority/internal/state"
@@ -47,11 +48,10 @@ func (r *Runtime) HandleUsage(ctx context.Context, raw []byte) error {
 		r.mu.Unlock()
 		return ErrShutdown
 	}
-	cfg := r.cfg
 	now := r.clock.Now().UTC()
 	r.mu.Unlock()
 
-	store, err := state.Load(ctx, cfg.CachePath)
+	store, err := state.Load(ctx, config.DefaultStateCachePath)
 	if err != nil {
 		return fmt.Errorf("usage load store: %w", err)
 	}
