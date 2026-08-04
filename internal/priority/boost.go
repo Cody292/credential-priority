@@ -14,10 +14,16 @@ func resetBoost(item PlanItem, options Options) int {
 	if options.ResetBoostWithin <= 0 || options.ResetBoost <= 0 || resetAt == nil {
 		return 0
 	}
-	// paid plan：沿用原 near long-window reset 提权。
-	// Free/Unknown：仅 Antigravity/Gemini 周额度 near-reset 可提权，避免 Codex Free 误升 999。
-	if paidRank(item.PlanType) == 0 && planItemProvider(item) != core.ProviderAntigravity {
-		return 0
+	// paid：三提供商 long-window near-reset 均可提权。
+	// Free/Unknown：仅 Antigravity、Codex；禁止 xAI Free（及 xAI free 计划）。
+	if paidRank(item.PlanType) == 0 {
+		provider := planItemProvider(item)
+		if provider == core.ProviderXAI || isXAIFreePlanItem(item) {
+			return 0
+		}
+		if provider != core.ProviderAntigravity && provider != core.ProviderCodex {
+			return 0
+		}
 	}
 	if resetAt.After(options.Now) && resetAt.Sub(options.Now) < options.ResetBoostWithin {
 		return options.ResetBoost
