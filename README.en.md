@@ -111,12 +111,16 @@ plugins:
 
 | Field | Description |
 | :--- | :--- |
-| `enabled` | Per-plugin switch. Global `plugins.enabled: true` and successful dynamic library registration are also required. |
+| `enabled` | Per-plugin switch. Global `plugins.enabled: true` and successful dynamic library registration are also required. Independent of `priority_rules.enabled`. |
 | `priority` | CPA plugin loading and execution order. Higher values run earlier. |
 | `auto_apply` | Enables scheduled execution and write-back. Default: `false`. |
 | `provider_scope` | `all` handles every currently supported provider; or list one or more providers separated by `\|`, e.g. `antigravity\|codex\|xai`. Legacy `selected` + `selected_providers` remains supported. |
 | `antigravity_model_group` | Antigravity quota group: `gemini` or `claude_gpt`. |
-| `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. |
+| `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. Independent of top-level `enabled`. |
+| `interval` | Auto sort / probe batch step (default 15m). Disabled credentials also batch with this interval (no fixed 1h freeze). |
+| `immediate_probe_limit` / `active_group_size` | Immediate probe count and active batch size; disabled batches share `active_group_size` with active. |
+
+> **v1.1.4 config notes** (user-facing): Flat `priority_rules.*` keys are supported. Turn on `priority_rules.enabled` so each provider’s `start_priority` is applied. Disabled/depleted accounts no longer wait a fixed 1 hour—pacing follows `interval` and batch settings. Within ~24h of a quota reset, accounts with remaining quota are preferred (Antigravity/Codex free included; xAI free excluded). `cache_path` / `cache_ttl` are not user settings.
 
 ### Provider-Independent Rules
 
@@ -133,7 +137,7 @@ Codex rules
 - `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
 - `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
 
-xAI rules (v1.1.3)
+xAI rules (v1.1.4)
 
 **Plan classification (FetchPlan)**
 
