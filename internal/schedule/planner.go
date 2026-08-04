@@ -23,6 +23,10 @@ type RNG interface {
 }
 
 // Options 是探测调度策略的已解析参数。
+//
+// Interval 用于 disabled 分批递进（now + k*Interval，k 从 1 起）；
+// 组大小与 active 共用 ActiveGroupSize。旧 DisabledGroupSize / DisabledProbeInterval
+// 字段保留为零值兼容，不再参与校验与调度。
 type Options struct {
 	Clock                 Clock
 	RNG                   RNG
@@ -30,7 +34,11 @@ type Options struct {
 	TopPriorityProbeCount int
 	ActiveGroupSize       int
 	ActiveGroupJitter     time.Duration
-	DisabledGroupSize     int
+	// Interval 是 disabled 分批探测的时间步长（通常来自 cfg.Interval）。
+	Interval time.Duration
+	// DisabledGroupSize 已废弃，不再驱动调度（保留字段避免调用方编译失败）。
+	DisabledGroupSize int
+	// DisabledProbeInterval 已废弃，不再驱动 1h 冷冻（保留字段避免调用方编译失败）。
 	DisabledProbeInterval time.Duration
 }
 
@@ -53,19 +61,20 @@ type Plan struct {
 }
 
 // PlanProbeSchedule 根据用户拍板策略生成可复现的探测分组。
+//
+// 当总数 ≤ ImmediateProbeLimit 时，active 与 disabled 一并进入 Immediate（now 探测），
+// 完全去掉固定 1h 冷冻。否则 disabled 按 ActiveGroupSize 分批，第 k 批为 now+k*Interval（k≥1）。
 func PlanProbeSchedule(credentials []core.Credential, options Options) (Plan, error) {
 	if err := validateOptions(options); err != nil {
 		return Plan{}, err
 	}
 	now := options.Clock.Now()
-	// 所有路径先排序并拆分 active/disabled，避免 early-return 把 Disabled 混入 Immediate。
 	ordered := sortedCredentials(credentials)
 	active, disabled := partitionCredentials(ordered)
 	if len(credentials) <= options.ImmediateProbeLimit {
-		return Plan{
-			Immediate:      probesAt(active, now),
-			DisabledGroups: disabledProbeGroups(disabled, now, options),
-		}, nil
+		// 小规模：disabled 与 active 一起立即探测，不再进入 1h 阶梯 DisabledGroups。
+		immediate := append(probesAt(active, now), probesAt(disabled, now)...)
+		return Plan{Immediate: immediate}, nil
 	}
 	immediateCount := min(options.TopPriorityProbeCount, len(active))
 	return Plan{
@@ -89,10 +98,8 @@ func validateOptions(options Options) error {
 		return fmt.Errorf("active group size %d: %w", options.ActiveGroupSize, ErrInvalidOptions)
 	case options.ActiveGroupJitter < 0:
 		return fmt.Errorf("active group jitter %s: %w", options.ActiveGroupJitter, ErrInvalidOptions)
-	case options.DisabledGroupSize < 1:
-		return fmt.Errorf("disabled group size %d: %w", options.DisabledGroupSize, ErrInvalidOptions)
-	case options.DisabledProbeInterval <= 0:
-		return fmt.Errorf("disabled probe interval %s: %w", options.DisabledProbeInterval, ErrInvalidOptions)
+	case options.Interval <= 0:
+		return fmt.Errorf("interval %s: %w", options.Interval, ErrInvalidOptions)
 	default:
 		return nil
 	}
@@ -148,11 +155,14 @@ func activeProbeGroups(credentials []core.Credential, now time.Time, options Opt
 }
 
 func disabledProbeGroups(credentials []core.Credential, now time.Time, options Options) []ProbeGroup {
-	groups := make([]ProbeGroup, 0, groupCount(len(credentials), options.DisabledGroupSize))
-	for start := 0; start < len(credentials); start += options.DisabledGroupSize {
-		end := min(start+options.DisabledGroupSize, len(credentials))
-		groupNumber := start/options.DisabledGroupSize + 1
-		nextProbeAt := now.Add(time.Duration(groupNumber) * options.DisabledProbeInterval)
+	// 与 active 共用 ActiveGroupSize；时间步长用 Interval（禁止固定 1h 冷冻）。
+	size := options.ActiveGroupSize
+	groups := make([]ProbeGroup, 0, groupCount(len(credentials), size))
+	for start := 0; start < len(credentials); start += size {
+		end := min(start+size, len(credentials))
+		// k 从 1 起：第 1 批 now+Interval，第 2 批 now+2*Interval …
+		groupNumber := start/size + 1
+		nextProbeAt := now.Add(time.Duration(groupNumber) * options.Interval)
 		groups = append(groups, ProbeGroup{Probes: probesAt(credentials[start:end], nextProbeAt)})
 	}
 	return groups
