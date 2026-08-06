@@ -128,7 +128,7 @@ plugins:
 | `interval` | 自动排序/探测分批时间步长（默认 15m）。disabled 凭证分批递进也使用该间隔（不再使用固定 1h 冷冻）。 |
 | `immediate_probe_limit` / `active_group_size` | 控制本轮立即探测数量与 active 分批大小；disabled 分批组大小与 active 共用 `active_group_size`。 |
 
-> **v1.1.4 配置要点**（用户向）：支持扁平 `priority_rules.*` 配置；打开 `priority_rules.enabled` 后各提供商 `start_priority` 才会按你的值生效。禁用/耗尽凭证不再固定等 1 小时，节奏跟 `interval` 与分批参数走。临近额度刷新约 24 小时内且仍有额度时优先用完（Antigravity/Codex 免费适用，xAI 免费不参与）。不提供 `cache_path` / `cache_ttl` 配置。
+> **配置要点**（用户向）：支持扁平 `priority_rules.*` 配置；打开 `priority_rules.enabled` 后各提供商 `start_priority` 才会按你的值生效。禁用/耗尽凭证不再固定等 1 小时，节奏跟 `interval` 与分批参数走。临近额度刷新约 24 小时内且仍有额度时优先用完（Antigravity/Codex 免费适用，xAI 免费不参与）。不提供 `cache_path` / `cache_ttl` 配置。
 
 ### 提供商独立排序规则
 
@@ -145,7 +145,7 @@ Codex 规则
 - `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
 - `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
 
-xAI 规则（v1.1.4）
+xAI 规则
 
 **套餐识别（FetchPlan）**
 
