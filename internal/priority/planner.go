@@ -8,6 +8,8 @@ import (
 	"credential-priority/internal/core"
 )
 
+const maxEnabledPriority = 999
+
 // Options 是 fresh-only 优先级规划器的已解析策略参数。
 type Options struct {
 	Now                       time.Time
@@ -110,6 +112,7 @@ func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, opti
 	// 局部探测只会给少数凭证 fresh 证据；若只写 start_priority，会与同伴历史优先级重叠。
 	// 同 provider 启用态正优先级必须在本轮规划结果中唯一，必要时改写无 fresh 同伴并 ForceWrite。
 	ensureUniqueProviderPriorities(items, options)
+	capExcludedXAIFreePriorities(items, options)
 	sortPlanItems(items)
 	return Plan{Items: items, Changes: changes(items, options)}
 }
@@ -252,8 +255,7 @@ func isAntigravityWeeklyDepletedItem(item PlanItem) bool {
 	return planItemProvider(item) == core.ProviderAntigravity &&
 		isFreeOrUnknownPlan(item.PlanType) &&
 		item.Remaining != nil &&
-		*item.Remaining <= 0 &&
-		item.LongWindowResetAt != nil
+		*item.Remaining <= 0
 }
 
 func isFreeOrUnknownPlan(planType core.PlanType) bool {
@@ -428,13 +430,35 @@ func ensureUniqueProviderPriorities(items []PlanItem, options Options) {
 		slices.SortStableFunc(group, func(left int, right int) int {
 			return compareUniquenessCandidates(items[left], items[right], options)
 		})
+		boosted := make(map[int]struct{}, len(group))
+		assigned := make(map[int]int, len(group))
+		used := make(map[int]struct{}, len(group))
+		boostPriority := maxEnabledPriority
+		for _, itemIndex := range group {
+			if !items[itemIndex].EvidenceFresh || resetBoost(items[itemIndex], options) <= 0 {
+				continue
+			}
+			boosted[itemIndex] = struct{}{}
+			nextPriority := nextAvailablePriority(boostPriority, used)
+			assigned[itemIndex] = nextPriority
+			used[nextPriority] = struct{}{}
+			boostPriority = nextPriority - 1
+		}
 		priority := startPriorityForProvider(provider, options)
 		for _, itemIndex := range group {
-			// resetBoost 999 仅保留给有 fresh 的 boost 项；无 fresh 同伴不得继承 999。
-			nextPriority := priority
-			if items[itemIndex].EvidenceFresh {
-				nextPriority = plannedPriority(items[itemIndex], priority, options)
+			if _, isBoosted := boosted[itemIndex]; !isBoosted {
+				nextPriority := nextAvailablePriority(priority, used)
+				assigned[itemIndex] = nextPriority
+				used[nextPriority] = struct{}{}
 			}
+			priority--
+			if priority < 1 {
+				priority = 1
+			}
+		}
+		for _, itemIndex := range group {
+			// resetBoost 999 仅保留给有 fresh 的 boost 项；无 fresh 同伴不得继承 999。
+			nextPriority := assigned[itemIndex]
 			if items[itemIndex].Priority != nextPriority {
 				if !items[itemIndex].EvidenceFresh {
 					items[itemIndex].ForceWrite = true
@@ -444,12 +468,23 @@ func ensureUniqueProviderPriorities(items []PlanItem, options Options) {
 				}
 				items[itemIndex].Priority = nextPriority
 			}
-			priority--
-			if priority < 1 {
-				priority = 1
-			}
 		}
 	}
+}
+
+func nextAvailablePriority(preferred int, used map[int]struct{}) int {
+	if preferred > maxEnabledPriority {
+		preferred = maxEnabledPriority
+	}
+	if preferred < 1 {
+		preferred = 1
+	}
+	for priority := preferred; priority >= 1; priority-- {
+		if _, exists := used[priority]; !exists {
+			return priority
+		}
+	}
+	return 1
 }
 
 func providerGroupHasFreshPositive(items []PlanItem, group []int) bool {
@@ -469,12 +504,34 @@ func providerGroupHasPriorityCollision(items []PlanItem, group []int) bool {
 	seen := make(map[int]struct{}, len(group))
 	for _, index := range group {
 		priority := items[index].Priority
+		if priority > maxEnabledPriority {
+			return true
+		}
 		if _, ok := seen[priority]; ok {
 			return true
 		}
 		seen[priority] = struct{}{}
 	}
 	return false
+}
+
+func capExcludedXAIFreePriorities(items []PlanItem, options Options) {
+	if xaiFreeParticipatesPriority(options) {
+		return
+	}
+	for index := range items {
+		item := &items[index]
+		if item.Disabled || item.Priority <= maxEnabledPriority || !isXAIFreePlanItem(*item) {
+			continue
+		}
+		item.Priority = maxEnabledPriority
+		if !item.EvidenceFresh {
+			item.ForceWrite = true
+			item.Reason = "xai free priority cap"
+		} else if item.Reason == "keep current state" || item.Reason == "" {
+			item.Reason = "xai free priority cap"
+		}
+	}
 }
 
 func providerGroupNeedsStartRealign(items []PlanItem, group []int, options Options) bool {
@@ -644,6 +701,9 @@ func compareResetAt(left *time.Time, right *time.Time) int {
 func normalizedMaxPriority(maxPriority int) int {
 	if maxPriority < 1 {
 		return 1
+	}
+	if maxPriority > maxEnabledPriority {
+		return maxEnabledPriority
 	}
 	return maxPriority
 }

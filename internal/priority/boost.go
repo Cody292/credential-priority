@@ -10,11 +10,11 @@ func plannedPriority(item PlanItem, basePriority int, options Options) int {
 }
 
 func resetBoost(item PlanItem, options Options) int {
-	resetAt := item.LongWindowResetAt
+	resetAt := item.ResetAt
 	if options.ResetBoostWithin <= 0 || options.ResetBoost <= 0 || resetAt == nil {
 		return 0
 	}
-	// paid：三提供商 long-window near-reset 均可提权。
+	// paid：三提供商 effective ResetAt near-reset 均可提权。
 	// Free/Unknown：仅 Antigravity、Codex；禁止 xAI Free（及 xAI free 计划）。
 	if paidRank(item.PlanType) == 0 {
 		provider := planItemProvider(item)
