@@ -120,7 +120,7 @@ plugins:
 | `interval` | Auto sort / probe batch step (default 15m). Disabled credentials also batch with this interval (no fixed 1h freeze). |
 | `immediate_probe_limit` / `active_group_size` | Immediate probe count and active batch size; disabled batches share `active_group_size` with active. |
 
-> **Configuration notes** (user-facing): Flat `priority_rules.*` keys are supported. Turn on `priority_rules.enabled` so each provider’s `start_priority` is applied. Disabled/depleted accounts no longer wait a fixed 1 hour—pacing follows `interval` and batch settings. Within ~24h of a quota reset, accounts with remaining quota are preferred (Antigravity/Codex free included; xAI free excluded). `cache_path` / `cache_ttl` are not user settings.
+> **Configuration notes** (user-facing): Flat `priority_rules.*` keys are supported. Turn on `priority_rules.enabled` so each provider’s `start_priority` is applied. Disabled/depleted accounts no longer wait a fixed 1 hour—pacing follows `interval` and batch settings. Within ~24h of a quota reset, accounts with remaining quota are preferred (Antigravity/Codex free and OAuth paid xAI weekly long-windows included; xAI free excluded).
 
 ### Provider-Independent Rules
 
