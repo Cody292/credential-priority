@@ -17,6 +17,8 @@ type authMaterial struct {
 	accountID   string
 	projectID   string
 	baseURL     string
+	authKind    string // auth_kind：oauth 时走 CLI chat-proxy 周账单
+	userID      string // 仅 sub/subject/user_id，供 x-userid
 }
 
 func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client, credentials []core.Credential) ([]core.Credential, map[string]authMaterial, error) {
@@ -33,7 +35,14 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON), accountIDFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
 		}
-		materials[credential.AuthIndex] = authMaterial{accessToken: accessTokenFromJSON(rawJSON), accountID: accountIDFromJSON(rawJSON), projectID: projectIDFromJSON(rawJSON), baseURL: baseURLFromJSON(rawJSON)}
+		materials[credential.AuthIndex] = authMaterial{
+			accessToken: accessTokenFromJSON(rawJSON),
+			accountID:   accountIDFromJSON(rawJSON),
+			projectID:   projectIDFromJSON(rawJSON),
+			baseURL:     baseURLFromJSON(rawJSON),
+			authKind:    authKindFromJSON(rawJSON),
+			userID:      userIDFromJSON(rawJSON),
+		}
 	}
 	return enriched, materials, nil
 }
@@ -140,4 +149,32 @@ func baseURLFromJSON(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(document.BaseURL)
+}
+
+func authKindFromJSON(raw json.RawMessage) string {
+	var document struct {
+		AuthKind string `json:"auth_kind"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(document.AuthKind)
+}
+
+// userIDFromJSON 仅取非密钥 subject 字段；禁止 email/token 充当 user id。
+func userIDFromJSON(raw json.RawMessage) string {
+	var document struct {
+		Sub     string `json:"sub"`
+		Subject string `json:"subject"`
+		UserID  string `json:"user_id"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return ""
+	}
+	for _, value := range []string{document.Sub, document.Subject, document.UserID} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

@@ -86,6 +86,20 @@ func recordXAIPlanResult(ctx context.Context, store *state.Store, plan xai.PlanR
 	snap.Remaining = remaining
 	snap.XAIDepletedKind = depletedKind
 	snap.ResetAt = resetAt
+	// 周长窗：本轮账单 seen → 以 plan 为准（nil 清陈旧）；未 seen → 保留旧值。
+	var longWindow *time.Time
+	if plan.LongWindowBillingSeen {
+		if plan.LongWindowResetAt != nil && !plan.LongWindowResetAt.IsZero() {
+			snap.LongWindowResetAt = plan.LongWindowResetAt.UTC()
+			t := snap.LongWindowResetAt
+			longWindow = &t
+		} else {
+			snap.LongWindowResetAt = time.Time{}
+		}
+	} else if !snap.LongWindowResetAt.IsZero() {
+		t := snap.LongWindowResetAt.UTC()
+		longWindow = &t
+	}
 	nextProbeAt := now.Add(xaiPositiveProbeInterval)
 	if inCooldown && !resetAt.IsZero() {
 		nextProbeAt = resetAt
@@ -104,6 +118,7 @@ func recordXAIPlanResult(ctx context.Context, store *state.Store, plan xai.PlanR
 		ObservedAt:        snap.ObservedAt,
 		ResetAt:           &resetAt,
 		Remaining:         &rem,
+		LongWindowResetAt: longWindow,
 		Freshness:         core.FreshnessFresh,
 		ProbeStatus:       core.ProbeStatusReady,
 		Status:            priority.EvidenceStatusReady,

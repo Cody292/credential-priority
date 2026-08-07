@@ -245,6 +245,8 @@ func (p probeSet) probeAndRecordXAI(ctx context.Context, input probeAndRecordInp
 		AuthIndex:   input.credential.AuthIndex,
 		AccessToken: accessToken,
 		BaseURL:     input.authMaterial.baseURL,
+		AuthKind:    input.authMaterial.authKind,
+		UserID:      input.authMaterial.userID,
 	})
 	// 401/凭证文案 或 本地已过期仍拿不到有效 plan：force refresh 一次后重拉 plan。
 	needForceRefresh := planLooksUnauthorized(plan) || (localExpired && plan.Source == "default_unfetchable")
@@ -255,6 +257,8 @@ func (p probeSet) probeAndRecordXAI(ctx context.Context, input probeAndRecordInp
 				AuthIndex:   input.credential.AuthIndex,
 				AccessToken: accessToken,
 				BaseURL:     input.authMaterial.baseURL,
+				AuthKind:    input.authMaterial.authKind,
+				UserID:      input.authMaterial.userID,
 			})
 			localExpired = xai.AccessTokenExpired(accessToken, input.now)
 		}
@@ -328,4 +332,3 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{AuthIndex: result.AuthIndex, Provider: core.ProviderAntigravity, ModelGroup: string(result.ModelGroup), ObservedAt: result.ObservedAt, ResetAt: *result.ResetAt, Remaining: int(*result.Remaining), Source: state.SourceFreshProbe, NextProbeAt: result.ObservedAt.Add(time.Hour)})
 	return priority.ProbeEvidence{Provider: core.ProviderAntigravity, AuthIndex: result.AuthIndex, ObservedAt: result.ObservedAt, ResetAt: result.ResetAt, Remaining: result.Remaining, LongWindowResetAt: result.LongWindowResetAt, Freshness: result.Freshness, ProbeStatus: result.ProbeStatus, Status: priority.EvidenceStatusReady, PlanType: result.PlanType, EvidenceFresh: true}, err
 }
-
