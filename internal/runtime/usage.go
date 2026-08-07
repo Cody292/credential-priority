@@ -87,7 +87,8 @@ func applyXAIUsageToStore(ctx context.Context, store *state.Store, rec usageReco
 			next.PlanClass = string(xai.PlanClassFree)
 		}
 		nextProbe := now.Add(xaiPositiveProbeInterval)
-		if err := writeXAIPolicy(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe); err != nil {
+		// usage 不触碰周账单：保留既有 LongWindowResetAt。
+		if err := writeXAIPolicyWithLongWindow(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe, true); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -102,7 +103,7 @@ func applyXAIUsageToStore(ctx context.Context, store *state.Store, rec usageReco
 				next.ResetAt = now.Add(xaiFreeCooldown)
 			}
 			nextProbe := now.Add(xaiFailureProbeBackoff)
-			if err := writeXAIPolicy(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe); err != nil {
+			if err := writeXAIPolicyWithLongWindow(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe, true); err != nil {
 				return false, err
 			}
 			return true, nil
@@ -112,7 +113,7 @@ func applyXAIUsageToStore(ctx context.Context, store *state.Store, rec usageReco
 		if nextProbe.IsZero() {
 			nextProbe = now.Add(xaiFreeCooldown)
 		}
-		if err := writeXAIPolicy(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe); err != nil {
+		if err := writeXAIPolicyWithLongWindow(ctx, store, authIndex, next, state.SourceFreshProbe, nextProbe, true); err != nil {
 			return false, err
 		}
 		return true, nil

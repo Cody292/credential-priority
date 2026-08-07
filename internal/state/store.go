@@ -42,12 +42,14 @@ type Entry struct {
 	NextProbeAt   time.Time     `json:"next_probe_at"`
 	AuthInvalid   bool          `json:"auth_invalid,omitempty"`
 	// xAI free 策略扩展字段（旁路 store，兼容旧缓存缺省）。
-	PlanClass       string    `json:"plan_class,omitempty"`        // free | paid
-	QuotaFailCount  int       `json:"quota_fail_count,omitempty"`  // 连续额度类失败次数
-	FirstSuccessAt  time.Time `json:"first_success_at,omitempty"`  // 首次成功调用锚点 A
-	NextEligibleAt  time.Time `json:"next_eligible_at,omitempty"`  // free 冷却到期时刻
-	XAIDepletedKind string    `json:"xai_depleted_kind,omitempty"` // free | weekly | monthly_and_weekly
-	QuotaFailTimes  []time.Time `json:"quota_fail_times,omitempty"` // xAI 429 失败时间戳队列
+	PlanClass       string      `json:"plan_class,omitempty"`        // free | paid
+	QuotaFailCount  int         `json:"quota_fail_count,omitempty"`  // 连续额度类失败次数
+	FirstSuccessAt  time.Time   `json:"first_success_at,omitempty"`  // 首次成功调用锚点 A
+	NextEligibleAt  time.Time   `json:"next_eligible_at,omitempty"`  // free 冷却到期时刻
+	XAIDepletedKind string      `json:"xai_depleted_kind,omitempty"` // free | weekly | monthly_and_weekly
+	QuotaFailTimes  []time.Time `json:"quota_fail_times,omitempty"`  // xAI 429 失败时间戳队列
+	// LongWindowResetAt 是 xAI OAuth 周账单容量重置时刻（可选）；usage 写路径必须保留。
+	LongWindowResetAt time.Time `json:"long_window_reset_at,omitempty"`
 }
 
 // ProbePolicy 定义状态缓存何时必须重新 fresh probe。
@@ -82,6 +84,10 @@ type ProbeSuccess struct {
 	NextEligibleAt  time.Time
 	XAIDepletedKind string
 	QuotaFailTimes  []time.Time
+	// LongWindowResetAt 写入 xAI OAuth 周长窗；零值时若 PreserveLongWindow 则保留旧值。
+	LongWindowResetAt time.Time
+	// PreserveLongWindow：true 时在入参零值下保留已有 LongWindowResetAt（usage 路径）。
+	PreserveLongWindow bool
 	// PreserveXAIPolicy：true 时合并已有 xAI 策略字段（仅当入参零值）。
 	PreserveXAIPolicy bool
 }
@@ -182,23 +188,27 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	defer s.mu.Unlock()
 	prev := s.entries[key]
 	entry := Entry{
-		SchemaVersion:   SchemaVersion,
-		Provider:        success.Provider,
-		ModelGroup:      entryModelGroup(success.ModelGroup),
-		AuthIndex:       authIndexKey(success.AuthIndex),
-		ObservedAt:      success.ObservedAt.UTC(),
-		ResetAt:         success.ResetAt.UTC(),
-		Remaining:       success.Remaining,
-		Source:          success.Source,
-		LastError:       "",
-		NextProbeAt:     success.NextProbeAt.UTC(),
-		AuthInvalid:     success.AuthInvalid,
-		PlanClass:       success.PlanClass,
-		QuotaFailCount:  success.QuotaFailCount,
-		FirstSuccessAt:  utcOrZero(success.FirstSuccessAt),
-		NextEligibleAt:  utcOrZero(success.NextEligibleAt),
-		XAIDepletedKind: success.XAIDepletedKind,
-		QuotaFailTimes:  utcTimes(success.QuotaFailTimes),
+		SchemaVersion:     SchemaVersion,
+		Provider:          success.Provider,
+		ModelGroup:        entryModelGroup(success.ModelGroup),
+		AuthIndex:         authIndexKey(success.AuthIndex),
+		ObservedAt:        success.ObservedAt.UTC(),
+		ResetAt:           success.ResetAt.UTC(),
+		Remaining:         success.Remaining,
+		Source:            success.Source,
+		LastError:         "",
+		NextProbeAt:       success.NextProbeAt.UTC(),
+		AuthInvalid:       success.AuthInvalid,
+		PlanClass:         success.PlanClass,
+		QuotaFailCount:    success.QuotaFailCount,
+		FirstSuccessAt:    utcOrZero(success.FirstSuccessAt),
+		NextEligibleAt:    utcOrZero(success.NextEligibleAt),
+		XAIDepletedKind:   success.XAIDepletedKind,
+		QuotaFailTimes:    utcTimes(success.QuotaFailTimes),
+		LongWindowResetAt: utcOrZero(success.LongWindowResetAt),
+	}
+	if success.PreserveLongWindow && entry.LongWindowResetAt.IsZero() {
+		entry.LongWindowResetAt = prev.LongWindowResetAt
 	}
 	if success.PreserveXAIPolicy {
 		if entry.PlanClass == "" {

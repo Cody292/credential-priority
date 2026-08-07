@@ -20,16 +20,17 @@ const (
 
 // xaiPolicySnapshot 是 store 中 xAI free 策略的可读快照。
 type xaiPolicySnapshot struct {
-	PlanClass       string
-	QuotaFailCount  int
-	FirstSuccessAt  time.Time
-	NextEligibleAt  time.Time
-	XAIDepletedKind string
-	AuthInvalid     bool
-	Remaining       int
-	ResetAt         time.Time
-	ObservedAt      time.Time
-	QuotaFailTimes  []time.Time
+	PlanClass         string
+	QuotaFailCount    int
+	FirstSuccessAt    time.Time
+	NextEligibleAt    time.Time
+	XAIDepletedKind   string
+	AuthInvalid       bool
+	Remaining         int
+	ResetAt           time.Time
+	ObservedAt        time.Time
+	QuotaFailTimes    []time.Time
+	LongWindowResetAt time.Time
 }
 
 func loadXAIPolicy(store *state.Store, authIndex string) xaiPolicySnapshot {
@@ -38,16 +39,17 @@ func loadXAIPolicy(store *state.Store, authIndex string) xaiPolicySnapshot {
 		return xaiPolicySnapshot{}
 	}
 	return xaiPolicySnapshot{
-		PlanClass:       entry.PlanClass,
-		QuotaFailCount:  entry.QuotaFailCount,
-		FirstSuccessAt:  entry.FirstSuccessAt,
-		NextEligibleAt:  entry.NextEligibleAt,
-		XAIDepletedKind: entry.XAIDepletedKind,
-		AuthInvalid:     entry.AuthInvalid,
-		Remaining:       entry.Remaining,
-		ResetAt:         entry.ResetAt,
-		ObservedAt:      entry.ObservedAt,
-		QuotaFailTimes:  entry.QuotaFailTimes,
+		PlanClass:         entry.PlanClass,
+		QuotaFailCount:    entry.QuotaFailCount,
+		FirstSuccessAt:    entry.FirstSuccessAt,
+		NextEligibleAt:    entry.NextEligibleAt,
+		XAIDepletedKind:   entry.XAIDepletedKind,
+		AuthInvalid:       entry.AuthInvalid,
+		Remaining:         entry.Remaining,
+		ResetAt:           entry.ResetAt,
+		ObservedAt:        entry.ObservedAt,
+		QuotaFailTimes:    entry.QuotaFailTimes,
+		LongWindowResetAt: entry.LongWindowResetAt,
 	}
 }
 
@@ -141,21 +143,28 @@ func xaiInFreeCooldown(snap xaiPolicySnapshot, now time.Time) bool {
 }
 
 func writeXAIPolicy(ctx context.Context, store *state.Store, authIndex string, snap xaiPolicySnapshot, source state.Source, nextProbeAt time.Time) error {
+	return writeXAIPolicyWithLongWindow(ctx, store, authIndex, snap, source, nextProbeAt, false)
+}
+
+// writeXAIPolicyWithLongWindow 写入策略；preserveLongWindow=true 时 usage 路径保留旧周长窗。
+func writeXAIPolicyWithLongWindow(ctx context.Context, store *state.Store, authIndex string, snap xaiPolicySnapshot, source state.Source, nextProbeAt time.Time, preserveLongWindow bool) error {
 	return store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:       authIndex,
-		Provider:        core.ProviderXAI,
-		ObservedAt:      snap.ObservedAt,
-		ResetAt:         snap.ResetAt,
-		Remaining:       snap.Remaining,
-		Source:          source,
-		NextProbeAt:     nextProbeAt,
-		AuthInvalid:     false,
-		PlanClass:       snap.PlanClass,
-		QuotaFailCount:  snap.QuotaFailCount,
-		FirstSuccessAt:  snap.FirstSuccessAt,
-		NextEligibleAt:  snap.NextEligibleAt,
-		XAIDepletedKind: snap.XAIDepletedKind,
-		QuotaFailTimes:  snap.QuotaFailTimes,
+		AuthIndex:          authIndex,
+		Provider:           core.ProviderXAI,
+		ObservedAt:         snap.ObservedAt,
+		ResetAt:            snap.ResetAt,
+		Remaining:          snap.Remaining,
+		Source:             source,
+		NextProbeAt:        nextProbeAt,
+		AuthInvalid:        false,
+		PlanClass:          snap.PlanClass,
+		QuotaFailCount:     snap.QuotaFailCount,
+		FirstSuccessAt:     snap.FirstSuccessAt,
+		NextEligibleAt:     snap.NextEligibleAt,
+		XAIDepletedKind:    snap.XAIDepletedKind,
+		QuotaFailTimes:     snap.QuotaFailTimes,
+		LongWindowResetAt:  snap.LongWindowResetAt,
+		PreserveLongWindow: preserveLongWindow,
 	})
 }
 
@@ -171,5 +180,6 @@ func writeXAIAuthInvalid(ctx context.Context, store *state.Store, authIndex stri
 		entry.PlanClass = ""
 		entry.NextEligibleAt = time.Time{}
 		entry.XAIDepletedKind = ""
+		entry.LongWindowResetAt = time.Time{}
 	})
 }
