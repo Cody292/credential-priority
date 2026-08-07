@@ -186,13 +186,81 @@ func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool
 
 func classifyWindow(name string) WindowType {
 	text := strings.ToLower(strings.TrimSpace(name))
-	if strings.Contains(text, "5") && (strings.Contains(text, "hour") || strings.Contains(text, "hr") || strings.Contains(text, "h")) {
-		return WindowFiveHour
+	if text == "" {
+		return WindowUnknown
 	}
-	if strings.Contains(text, "week") || strings.Contains(text, "7d") {
+	// 长窗口优先，避免 "5d 15h" 等混写被短窗规则命中
+	if strings.Contains(text, "week") || strings.Contains(text, "7d") || hasDayToken(text) {
 		return WindowWeekly
 	}
+	// 仅匹配独立数字 5 + 小时单位，禁止 15h/25hr 等子串假阳性
+	if hasFiveHourToken(text) {
+		return WindowFiveHour
+	}
 	return WindowUnknown
+}
+
+// hasDayToken 检测 Nd 天单位（如 5d），用于周额度混写。
+func hasDayToken(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
+			continue
+		}
+		j := i + 1
+		for j < len(text) && text[j] >= '0' && text[j] <= '9' {
+			j++
+		}
+		if j < len(text) && text[j] == 'd' && (j+1 == len(text) || text[j+1] < 'a' || text[j+1] > 'z') {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// hasFiveHourToken 检测独立的五小时 token：5h / 5hr / 5 hour(s)。
+// 要求数字恰好为 5（左右非数字），单位以非字母边界结束，避免 15h、25hr 假阳性。
+func hasFiveHourToken(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
+			continue
+		}
+		j := i + 1
+		for j < len(text) && text[j] >= '0' && text[j] <= '9' {
+			j++
+		}
+		// 仅接受恰好一位数字且值为 5
+		if j-i != 1 || text[i] != '5' {
+			i = j
+			continue
+		}
+		k := j
+		for k < len(text) && text[k] == ' ' {
+			k++
+		}
+		if isHourUnitAt(text, k) {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// isHourUnitAt 从 offset 起匹配小时单位（长优先）：hours/hour/hrs/hr/h。
+func isHourUnitAt(text string, offset int) bool {
+	if offset >= len(text) {
+		return false
+	}
+	for _, unit := range []string{"hours", "hour", "hrs", "hr", "h"} {
+		end := offset + len(unit)
+		if end > len(text) || text[offset:end] != unit {
+			continue
+		}
+		if end == len(text) || text[end] < 'a' || text[end] > 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 func inferPlanType(windows []candidateWindow) core.PlanType {

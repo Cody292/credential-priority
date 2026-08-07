@@ -28,15 +28,20 @@ const (
 
 // PlanResult 是一次轻量套餐分类结果（无 chat/completions）。
 type PlanResult struct {
-	Provider    core.Provider
-	AuthIndex   string
-	ObservedAt  time.Time
-	PlanClass   PlanClass
-	PlanType    core.PlanType
-	Source      string
-	Error       string
-	HTTPStatus  int  // 最近一次 settings/billing 非 2xx 状态；0=无或网络失败
-	AuthFailed  bool // 鉴权失效（401/凭证文案）；true 时不得标 free 正额度
+	Provider   core.Provider
+	AuthIndex  string
+	ObservedAt time.Time
+	PlanClass  PlanClass
+	PlanType   core.PlanType
+	Source     string
+	Error      string
+	HTTPStatus int  // 最近一次 settings/billing 非 2xx 状态；0=无或网络失败
+	AuthFailed bool // 鉴权失效（401/凭证文案）；true 时不得标 free 正额度
+	// LongWindowResetAt 仅来自 OAuth 周账单 currentPeriod(type=weekly).end；monthly 不计。
+	LongWindowResetAt *time.Time
+	// LongWindowBillingSeen 表示本轮已成功拿到可解析的 OAuth 周账单响应；
+	// true 且 LongWindowResetAt=nil 时，store 必须清掉陈旧长窗。
+	LongWindowBillingSeen bool
 }
 
 // PlanRequest 是 FetchPlan 所需的宿主凭证上下文。
@@ -44,6 +49,10 @@ type PlanRequest struct {
 	AuthIndex   string
 	AccessToken string
 	BaseURL     string
+	// AuthKind 来自 auth JSON 的 auth_kind（如 oauth）；仅 oauth 走 CLI chat-proxy 周账单。
+	AuthKind string
+	// UserID 仅来自非密钥 subject 字段（sub/subject/user_id），用于 x-userid；禁止 email/token。
+	UserID string
 }
 
 // FetchPlan 通过 settings / billing / JWT tier 分类套餐，禁止 chat 多模型 probe。
@@ -155,7 +164,38 @@ func (p Prober) FetchPlan(ctx context.Context, request PlanRequest) PlanResult {
 	if lastErr != "" {
 		result.Error = safeError(lastErr)
 	}
+	// OAuth：查询官方 CLI chat-proxy 周账单；API key 路径不改。
+	if isOAuthAuthKind(request.AuthKind) {
+		longAt, seen := p.fetchOAuthWeeklyLongWindow(ctx, request)
+		result.LongWindowBillingSeen = seen
+		result.LongWindowResetAt = longAt
+	}
 	return result
+}
+
+// fetchOAuthWeeklyLongWindow 通过宿主 HTTPDoRaw 查询官方周账单。
+// 成功拿到 2xx body 时 seen=true（即使无 weekly 也要清陈旧长窗）；网络/非 2xx 时 seen=false 保留旧值。
+// 绝不记录 Authorization 或原始 billing/token 正文。
+func (p Prober) fetchOAuthWeeklyLongWindow(ctx context.Context, request PlanRequest) (*time.Time, bool) {
+	headers := planHeaders(request)
+	if userID := strings.TrimSpace(request.UserID); userID != "" {
+		headers["x-userid"] = []string{userID}
+	}
+	resp, err := p.host.HTTPDoRaw(ctx, host.HTTPRequest{
+		AuthIndex: request.AuthIndex,
+		Method:    http.MethodGet,
+		URL:       CLIChatProxyBillingURL,
+		Headers:   headers,
+	})
+	if err != nil {
+		return nil, false
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || len(resp.Body) == 0 {
+		return nil, false
+	}
+	// 有可解析响应体：seen=true；解析失败/无 weekly → nil 长窗（调用方清陈旧）。
+	longAt, _ := ParseWeeklyLongWindowReset(resp.Body)
+	return longAt, true
 }
 
 // ClassifyPlan 从 settings/billing JSON 与 JWT tier 判定 free/paid。
@@ -403,10 +443,10 @@ func planHeaders(request PlanRequest) host.Header {
 		token = accessToken
 	}
 	return host.Header{
-		"Accept":               []string{"application/json"},
-		"Authorization":        []string{"Bearer " + token},
-		"User-Agent":           []string{"credential-priority/xai-plan"},
-		"X-XAI-Token-Auth":     []string{"xai-grok-cli"},
+		"Accept":                []string{"application/json"},
+		"Authorization":         []string{"Bearer " + token},
+		"User-Agent":            []string{"credential-priority/xai-plan"},
+		"X-XAI-Token-Auth":      []string{"xai-grok-cli"},
 		"x-grok-client-version": []string{"0.2.93"},
 	}
 }

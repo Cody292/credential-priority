@@ -45,7 +45,7 @@ func pickPaidWindow(usage whamUsage, observedAt time.Time) (effectiveWindow, boo
 	}
 	// Codex 取消 5h 限制后：仅 weekly 付费窗口时动态识别为付费额度。
 	if hasWeekly {
-		return effectiveWindow{resetAt: weekly.resetAt, remaining: weekly.remaining, windowType: WindowWeekly}, true
+		return effectiveWindow{resetAt: weekly.resetAt, remaining: weekly.remaining, windowType: WindowWeekly, longWindowResetAt: weekly.resetAt}, true
 	}
 	return effectiveWindow{}, false
 }
@@ -55,7 +55,7 @@ func pickFreeWindow(usage whamUsage, observedAt time.Time) (effectiveWindow, boo
 	if !ok {
 		return effectiveWindow{}, false
 	}
-	return effectiveWindow{resetAt: monthly.resetAt, remaining: monthly.remaining, windowType: WindowMonthly}, true
+	return effectiveWindow{resetAt: monthly.resetAt, remaining: monthly.remaining, windowType: WindowMonthly, longWindowResetAt: monthly.resetAt}, true
 }
 
 func pickWindow(usage whamUsage, observedAt time.Time, match func(whamWindow) bool) (parsedWindow, bool) {
