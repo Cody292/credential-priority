@@ -1,6 +1,9 @@
 package priority
 
-import "credential-priority/internal/core"
+import (
+	"credential-priority/internal/core"
+	"time"
+)
 
 func plannedPriority(item PlanItem, basePriority int, options Options) int {
 	if resetBoost(item, options) > 0 {
@@ -10,8 +13,22 @@ func plannedPriority(item PlanItem, basePriority int, options Options) int {
 }
 
 func resetBoost(item PlanItem, options Options) int {
-	resetAt := item.ResetAt
-	if options.ResetBoostWithin <= 0 || options.ResetBoost <= 0 || resetAt == nil {
+	if options.ResetBoostWithin <= 0 || options.ResetBoost <= 0 {
+		return 0
+	}
+
+	provider := planItemProvider(item)
+	var resetAt *time.Time
+
+	// Antigravity / Codex / xAI：999 提权仅看 LongWindowResetAt；
+	// ResetAt 为短窗/free 冷却，不得单独制造 999。
+	if provider == core.ProviderAntigravity || provider == core.ProviderCodex || provider == core.ProviderXAI {
+		resetAt = item.LongWindowResetAt
+	} else {
+		resetAt = item.ResetAt
+	}
+
+	if resetAt == nil {
 		return 0
 	}
 	// paid：三提供商 effective ResetAt near-reset 均可提权。
