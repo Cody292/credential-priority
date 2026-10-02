@@ -78,7 +78,7 @@ func ParseAvailableModels(raw []byte, observedAt time.Time, group ModelGroup) Pr
 		Status:      StatusReady,
 		PlanType:    inferPlanType(windows),
 	}
-	if weekly, ok := firstWindow(windows, WindowWeekly); ok {
+	if weekly, ok := selectWindow(windows, WindowWeekly); ok {
 		result.LongWindowResetAt = weekly.resetAt
 	}
 	return result
@@ -132,8 +132,8 @@ func quotaGroupBelongsToModelGroup(quotaGroup quotaGroup, group ModelGroup) bool
 }
 
 func pickEffectiveWindow(windows []candidateWindow) (candidateWindow, bool) {
-	fiveHour, hasFiveHour := firstWindow(windows, WindowFiveHour)
-	weekly, hasWeekly := firstWindow(windows, WindowWeekly)
+	fiveHour, hasFiveHour := selectWindow(windows, WindowFiveHour)
+	weekly, hasWeekly := selectWindow(windows, WindowWeekly)
 	if hasFiveHour && hasWeekly {
 		if weekly.remaining <= 0 {
 			return weekly, true
@@ -149,19 +149,59 @@ func pickEffectiveWindow(windows []candidateWindow) (candidateWindow, bool) {
 	if hasFiveHour {
 		return fiveHour, true
 	}
-	for _, window := range windows {
-		return window, true
-	}
-	return candidateWindow{}, false
+	return selectAnyWindow(windows)
 }
 
-func firstWindow(windows []candidateWindow, windowType WindowType) (candidateWindow, bool) {
+// selectWindow 在同类型窗口中做确定性归约，不依赖 models map 遍历顺序。
+// 规则：remaining 更小者优先；remaining 相同则 resetAt 更早者优先；
+// nil reset 排最后；完全相同保持已有顺序。
+func selectWindow(windows []candidateWindow, windowType WindowType) (candidateWindow, bool) {
+	var best candidateWindow
+	found := false
 	for _, window := range windows {
-		if window.window == windowType {
-			return window, true
+		if window.window != windowType {
+			continue
+		}
+		if !found || preferWindow(window, best) {
+			best = window
+			found = true
 		}
 	}
-	return candidateWindow{}, false
+	return best, found
+}
+
+func selectAnyWindow(windows []candidateWindow) (candidateWindow, bool) {
+	var best candidateWindow
+	found := false
+	for _, window := range windows {
+		if !found || preferWindow(window, best) {
+			best = window
+			found = true
+		}
+	}
+	return best, found
+}
+
+// preferWindow 同类型窗口确定性比较：remaining 更小优先，其次更早 resetAt。
+func preferWindow(candidate, current candidateWindow) bool {
+	if candidate.remaining != current.remaining {
+		return candidate.remaining < current.remaining
+	}
+	return resetAtEarlier(candidate.resetAt, current.resetAt)
+}
+
+// resetAtEarlier: candidate 的 reset 是否严格早于 current；nil 劣于非 nil。
+func resetAtEarlier(a, b *time.Time) bool {
+	if a == nil && b == nil {
+		return false
+	}
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return a.Before(*b)
 }
 
 func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType) (candidateWindow, bool) {
@@ -189,8 +229,8 @@ func classifyWindow(name string) WindowType {
 	if text == "" {
 		return WindowUnknown
 	}
-	// 长窗口优先，避免 "5d 15h" 等混写被短窗规则命中
-	if strings.Contains(text, "week") || strings.Contains(text, "7d") || hasDayToken(text) {
+	// 长窗口优先：仅明确 weekly/7d，或 >=5d 混写（如 "5d 15h"）；排除 1d/24h 短日窗。
+	if strings.Contains(text, "week") || strings.Contains(text, "7d") || hasLongDayToken(text) {
 		return WindowWeekly
 	}
 	// 仅匹配独立数字 5 + 小时单位，禁止 15h/25hr 等子串假阳性
@@ -200,8 +240,8 @@ func classifyWindow(name string) WindowType {
 	return WindowUnknown
 }
 
-// hasDayToken 检测 Nd 天单位（如 5d），用于周额度混写。
-func hasDayToken(text string) bool {
+// hasLongDayToken 检测 >=5 天的 Nd 单位（如 5d），用于周额度混写；1d 等短日窗不计入。
+func hasLongDayToken(text string) bool {
 	for i := 0; i < len(text); i++ {
 		if text[i] < '0' || text[i] > '9' {
 			continue
@@ -211,7 +251,10 @@ func hasDayToken(text string) bool {
 			j++
 		}
 		if j < len(text) && text[j] == 'd' && (j+1 == len(text) || text[j+1] < 'a' || text[j+1] > 'z') {
-			return true
+			days, err := strconv.Atoi(text[i:j])
+			if err == nil && days >= 5 {
+				return true
+			}
 		}
 		i = j
 	}
@@ -264,10 +307,10 @@ func isHourUnitAt(text string, offset int) bool {
 }
 
 func inferPlanType(windows []candidateWindow) core.PlanType {
-	if _, ok := firstWindow(windows, WindowFiveHour); ok {
+	if _, ok := selectWindow(windows, WindowFiveHour); ok {
 		return core.PlanTypePro
 	}
-	if _, ok := firstWindow(windows, WindowWeekly); ok {
+	if _, ok := selectWindow(windows, WindowWeekly); ok {
 		return core.PlanTypeFree
 	}
 	return core.PlanTypeUnknown
