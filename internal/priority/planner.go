@@ -253,13 +253,8 @@ func isXAIAuthInvalid(credential core.Credential, evidence ProbeEvidence) bool {
 
 func isAntigravityWeeklyDepletedItem(item PlanItem) bool {
 	return planItemProvider(item) == core.ProviderAntigravity &&
-		isFreeOrUnknownPlan(item.PlanType) &&
 		item.Remaining != nil &&
 		*item.Remaining <= 0
-}
-
-func isFreeOrUnknownPlan(planType core.PlanType) bool {
-	return planType == core.PlanTypeFree || planType == core.PlanTypeUnknown
 }
 
 func codexFreeDepletedPriority(options Options) int {
