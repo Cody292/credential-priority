@@ -66,7 +66,7 @@ func probeBody(request ProbeRequest) []byte {
 }
 
 func probeHeaders(request ProbeRequest) host.Header {
-	headers := host.Header{"Accept": []string{"application/json"}, "Authorization": []string{"Bearer $TOKEN$"}, "Content-Type": []string{"application/json"}, "User-Agent": []string{"antigravity/cli/1.0.8 darwin/arm64"}}
+	headers := host.Header{"Accept": []string{"application/json"}, "Authorization": []string{"Bearer $TOKEN$"}, "Content-Type": []string{"application/json"}, "User-Agent": []string{"antigravity/hub/2.24.0 (aidev_client; os_type=darwin; arch=arm64; cl=1000335682)"}}
 	if token := strings.TrimSpace(request.AccessToken); token != "" {
 		headers["Authorization"] = []string{"Bearer " + token}
 	}
