@@ -115,7 +115,7 @@ plugins:
 | `priority` | CPA plugin loading and execution order. Higher values run earlier. |
 | `auto_apply` | Enables scheduled execution and write-back. Default: `false`. |
 | `provider_scope` | `all` handles every currently supported provider; or list one or more providers separated by `\|`, e.g. `antigravity\|codex\|xai`. Legacy `selected` + `selected_providers` remains supported. |
-| `antigravity_model_group` | Antigravity quota group: `gemini` or `claude_gpt`. |
+| `antigravity_model_group` | Antigravity quota group: `gemini`, `claude_gpt`, or `gemini_4_argon`. |
 | `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. Independent of top-level `enabled`. |
 | `interval` | Auto sort / probe batch step (default 15m). Disabled credentials also batch with this interval (no fixed 1h freeze). |
 | `immediate_probe_limit` / `active_group_size` | Immediate probe count and active batch size; disabled batches share `active_group_size` with active. |
@@ -192,6 +192,8 @@ The plugin registers **resources** (static shell) and **routes** (dynamic APIs) 
   Manual probe, plan, and write-back of credential priorities.
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=claude_gpt`
   Handles only Antigravity credentials with the Claude/GPT model group.
+- `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=gemini_4_argon`
+  Handles only Antigravity credentials with the Gemini 4 Argon model group.
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=codex`
   Handles only Codex credentials.
 - `GET /v0/management/plugins/credential-priority/diagnostics`

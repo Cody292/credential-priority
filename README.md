@@ -123,7 +123,7 @@ plugins:
 | `priority` | CPA 宿主加载与执行插件的顺序，数值越大优先级越高。 |
 | `auto_apply` | 是否由定时器自动执行并写回排序结果，默认 `false`。 |
 | `provider_scope` | `all` 处理全部当前支持的提供商；也可填单个或多个提供商，多个用 `\|` 分隔，例如 `antigravity\|codex\|xai`。兼容旧配置 `selected` + `selected_providers`。 |
-| `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini` 与 `claude_gpt`。 |
+| `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini`、`claude_gpt` 与 `gemini_4_argon`。 |
 | `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略。与顶层 `enabled` 独立。 |
 | `interval` | 自动排序/探测分批时间步长（默认 15m）。disabled 凭证分批递进也使用该间隔（不再使用固定 1h 冷冻）。 |
 | `immediate_probe_limit` / `active_group_size` | 控制本轮立即探测数量与 active 分批大小；disabled 分批组大小与 active 共用 `active_group_size`。 |
@@ -200,6 +200,8 @@ xAI 规则
   手动触发探测、规划并写回凭证优先级。
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=claude_gpt`
   只处理 Antigravity 凭证并使用 Claude/GPT 模型组。
+- `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=antigravity&antigravity_model_group=gemini_4_argon`
+  只处理 Antigravity 凭证并使用 Gemini 4 Argon 模型组。
 - `POST /v0/management/plugins/credential-priority/run?mode=apply&provider=codex`
   只处理 Codex 凭证。
 - `GET /v0/management/plugins/credential-priority/diagnostics`

@@ -173,7 +173,7 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata: Metadata{
 			Name:             config.PluginID,
-			Version:          "1.1.9",
+			Version:          "1.1.10",
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
@@ -192,7 +192,7 @@ func configFields() []ConfigField {
 	return []ConfigField{
 		{Name: "auto_apply", Type: "boolean", Description: localizedDescription("启用定时自动优先级排序并写回；默认 false，手动执行仍可用。", "Enable scheduled automatic priority sorting and write-back; default false so manual runs remain available."), DefaultValue: defaults.AutoApply},
 		{Name: "provider_scope", Type: "string", Description: localizedDescription("排序提供商：填 all 表示全部；或填单个/多个提供商，多个用 | 分隔，例如 antigravity|codex|xai。", "Providers to sort: all for every supported provider, or a single/multiple list separated by |, e.g. antigravity|codex|xai."), DefaultValue: string(defaults.ProviderScope)},
-		{Name: "antigravity_model_group", Type: "string", Description: localizedDescription("Antigravity 配额模型组：gemini 或 claude_gpt。", "Antigravity quota model group: gemini or claude_gpt."), EnumValues: []string{"gemini", "claude_gpt"}, DefaultValue: string(defaults.AntigravityModelGroup)},
+		{Name: "antigravity_model_group", Type: "string", Description: localizedDescription("Antigravity 配额模型组：gemini、claude_gpt 或 gemini_4_argon。", "Antigravity quota model group: gemini, claude_gpt, or gemini_4_argon."), EnumValues: []string{"gemini", "claude_gpt", "gemini_4_argon"}, DefaultValue: string(defaults.AntigravityModelGroup)},
 		{Name: "interval", Type: "string", Description: localizedDescription("自动排序间隔（分钟）。填写纯数字即可，无需单位；默认 15。", "Auto-sort interval in minutes. Enter a plain number without a unit; default 15."), DefaultValue: formatDurationMinutes(defaults.Interval)},
 		{Name: "immediate_probe_limit", Type: "integer", Description: localizedDescription("单轮立即探测凭证上限；超过后分批探测。默认 30。", "Max credentials probed immediately per round; excess are batched. Default 30."), DefaultValue: defaults.ImmediateProbeLimit},
 		{Name: "active_group_size", Type: "integer", Description: localizedDescription("分批探测时每批凭证数。默认 10。", "Credentials per batch when probing in batches. Default 10."), DefaultValue: defaults.ActiveGroupSize},
