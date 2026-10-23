@@ -128,7 +128,10 @@ func quotaGroupBelongsToModelGroup(quotaGroup quotaGroup, group ModelGroup) bool
 	if group == ModelGroupClaudeGPT {
 		return strings.Contains(text, "claude") || strings.Contains(text, "gpt")
 	}
-	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
+	if group == ModelGroupGemini4Argon {
+		return hasGemini4ArgonToken(text)
+	}
+	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt") && !hasGemini4ArgonToken(text)
 }
 
 func pickEffectiveWindow(windows []candidateWindow) (candidateWindow, bool) {
@@ -221,7 +224,19 @@ func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool
 	if group == ModelGroupClaudeGPT {
 		return strings.Contains(text, "claude") || strings.Contains(text, "gpt") || strings.Contains(text, "openai")
 	}
-	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
+	if group == ModelGroupGemini4Argon {
+		return hasGemini4ArgonToken(text)
+	}
+	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt") && !hasGemini4ArgonToken(text)
+}
+
+// hasGemini4ArgonToken 仅匹配 gemini-4-argon / gemini 4 argon 语义，排除普通 Gemini Argon 与裸 argon。
+func hasGemini4ArgonToken(text string) bool {
+	normalized := strings.ToLower(text)
+	normalized = strings.ReplaceAll(normalized, "-", " ")
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	return strings.Contains(normalized, "gemini 4 argon")
 }
 
 func classifyWindow(name string) WindowType {

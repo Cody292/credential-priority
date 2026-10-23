@@ -10,6 +10,8 @@ const (
 	AntigravityModelGroupGemini AntigravityModelGroup = "gemini"
 	// AntigravityModelGroupClaudeGPT 表示 Claude 和 GPT 模型组。
 	AntigravityModelGroupClaudeGPT AntigravityModelGroup = "claude_gpt"
+	// AntigravityModelGroupGemini4Argon 表示 Gemini 4 Argon 模型组。
+	AntigravityModelGroupGemini4Argon AntigravityModelGroup = "gemini_4_argon"
 )
 
 // ParseAntigravityModelGroup 将 UI、JSON 或 YAML 中的模型组文本解析为受控枚举。
@@ -19,8 +21,10 @@ func ParseAntigravityModelGroup(value string) (AntigravityModelGroup, error) {
 		return AntigravityModelGroupGemini, nil
 	case string(AntigravityModelGroupClaudeGPT), "claudegpt", "claude-gpt", "claude gpt", "claude_and_gpt", "claude-and-gpt", "claude and gpt":
 		return AntigravityModelGroupClaudeGPT, nil
+	case string(AntigravityModelGroupGemini4Argon), "gemini 4 argon", "gemini4argon":
+		return AntigravityModelGroupGemini4Argon, nil
 	default:
-		return "", invalid("antigravity_model_group", value, "must be gemini or claude_gpt")
+		return "", invalid("antigravity_model_group", value, "must be gemini, claude_gpt or gemini_4_argon")
 	}
 }
 

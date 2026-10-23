@@ -15,6 +15,8 @@ const (
 	ModelGroupGemini = config.AntigravityModelGroupGemini
 	// ModelGroupClaudeGPT 表示 Claude 和 GPT 模型组。
 	ModelGroupClaudeGPT = config.AntigravityModelGroupClaudeGPT
+	// ModelGroupGemini4Argon 表示 Gemini 4 Argon 模型组。
+	ModelGroupGemini4Argon = config.AntigravityModelGroupGemini4Argon
 )
 
 // RetrieveUserQuotaSummaryURL 是 CPA 配额页使用的 Antigravity 额度查询端点。
