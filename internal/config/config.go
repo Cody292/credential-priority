@@ -29,7 +29,7 @@ var ErrInvalidConfig = errors.New("config: invalid")
 //
 // Enabled 为顶层插件开关；PriorityRules.Enabled 为自定义排序规则开关，二者语义独立。
 // DisabledGroupSize / DisabledProbeInterval 仍可从旧配置解析进字段，但不再驱动探测调度
-//（调度使用 Interval 与 ActiveGroupSize）。
+// （调度使用 Interval 与 ActiveGroupSize）。
 // 探测缓存路径与 freshness TTL 为包内常量，不暴露为可配置字段。
 type Config struct {
 	Enabled               bool
@@ -71,6 +71,9 @@ type PriorityRules struct {
 // AntigravityPriorityRules 是 Antigravity 排序规则的可配置部分。
 type AntigravityPriorityRules struct {
 	StartPriority int
+	// DepletedDisabled：fresh Remaining<=0 时是否硬禁用本轮目标；默认 false（不禁用）。
+	// 显式 true 才硬禁用；显式/默认 false 时不新增硬禁用，仍写 priority=-1，且不清除用户原有 Disabled=true。
+	DepletedDisabled bool
 }
 
 // CodexPriorityRules 是 Codex 排序规则的可配置部分。
@@ -129,7 +132,8 @@ type rawPriorityRules struct {
 }
 
 type rawAntigravityPriority struct {
-	StartPriority *int `json:"start_priority"`
+	StartPriority    *int  `json:"start_priority"`
+	DepletedDisabled *bool `json:"depleted_disabled"`
 }
 
 type rawCodexPriority struct {
@@ -266,24 +270,25 @@ func defaultPriorityRules() PriorityRules {
 	return PriorityRules{
 		Enabled: false,
 		Antigravity: AntigravityPriorityRules{
-			StartPriority: 100,
+			StartPriority:    100,
+			DepletedDisabled: false,
 		},
 		Codex: CodexPriorityRules{
 			StartPriority:        100,
 			FreeDepletedPriority: -1,
-			FreeDepletedDisabled: true,
+			FreeDepletedDisabled: false,
 			PaidDepletedDisabled: false,
 		},
 		XAI: XAIPriorityRules{
 			StartPriority:        100,
 			FreeDepletedPriority: -1,
-			// 方案 A：默认软禁用（仅降 priority），不 PatchDisabled。
+			// 默认不新增硬禁用，仅降 priority；恢复流程可解除历史禁用，401 仍硬禁用。
 			FreeDepletedDisabled: false,
 			// Free 默认不参与正优先级排序；显式 free_participates_priority: true 才 opt-in。
 			FreeParticipatesPriority:         false,
 			WeeklyDepletedPriority:           -1,
 			MonthlyAndWeeklyDepletedPriority: -1,
-			MonthlyAndWeeklyDepletedDisabled: true,
+			MonthlyAndWeeklyDepletedDisabled: false,
 		},
 	}
 }
@@ -465,6 +470,9 @@ func (raw rawPriorityRules) apply(rules PriorityRules) (PriorityRules, error) {
 func (raw rawAntigravityPriority) apply(rule AntigravityPriorityRules) (AntigravityPriorityRules, error) {
 	if raw.StartPriority != nil {
 		rule.StartPriority = *raw.StartPriority
+	}
+	if raw.DepletedDisabled != nil {
+		rule.DepletedDisabled = *raw.DepletedDisabled
 	}
 	if rule.StartPriority < 1 {
 		return AntigravityPriorityRules{}, invalid("priority_rules.antigravity.start_priority", fmt.Sprint(rule.StartPriority), "must be at least 1")

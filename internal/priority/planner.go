@@ -18,8 +18,11 @@ type Options struct {
 	CodexFreeDepletedPriority *int
 	CodexFreeDepletedDisabled *bool
 	CodexPaidDepletedDisabled *bool
-	XAIFreeDepletedPriority   *int
-	XAIFreeDepletedDisabled   *bool
+	// AntigravityDepletedDisabled：fresh Remaining<=0 时是否硬禁用；nil 视为 false（默认不禁用）。
+	// 显式 true 才硬禁用；显式/默认 false 不新增硬禁用，不清除用户原有 Disabled=true；priority 仍为 -1。
+	AntigravityDepletedDisabled *bool
+	XAIFreeDepletedPriority     *int
+	XAIFreeDepletedDisabled     *bool
 	// XAIFreeParticipatesPriority：true 时 free 参与正优先级/free-first/uniqueness；nil/false（默认）时仅保留耗尽/冷却/401 链。
 	XAIFreeParticipatesPriority         *bool
 	XAIWeeklyDepletedPriority           *int
@@ -212,7 +215,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				item.LongWindowResetAt = evidence.LongWindowResetAt
 				item.EvidenceFresh = true
 				item.Priority = -1
-				item.Disabled = true
+				item.Disabled = credential.Disabled || antigravityDepletedDisabled(options)
 				item.Reason = "fresh remaining depleted"
 			} else if evidence.Remaining != nil && evidence.ResetAt != nil {
 				item.PlanType = evidence.PlanType
@@ -264,9 +267,16 @@ func codexFreeDepletedPriority(options Options) int {
 	return *options.CodexFreeDepletedPriority
 }
 
+func antigravityDepletedDisabled(options Options) bool {
+	if options.AntigravityDepletedDisabled == nil {
+		return false
+	}
+	return *options.AntigravityDepletedDisabled
+}
+
 func codexFreeDepletedDisabled(options Options) bool {
 	if options.CodexFreeDepletedDisabled == nil {
-		return true
+		return false
 	}
 	return *options.CodexFreeDepletedDisabled
 }
@@ -363,7 +373,7 @@ func xaiMonthlyAndWeeklyDepletedPriority(options Options) int {
 
 func xaiMonthlyAndWeeklyDepletedDisabled(options Options) bool {
 	if options.XAIMonthlyAndWeeklyDepletedDisabled == nil {
-		return true
+		return false
 	}
 	return *options.XAIMonthlyAndWeeklyDepletedDisabled
 }
@@ -768,6 +778,9 @@ func shouldChange(item PlanItem, options Options) bool {
 	}
 	if item.Priority == -1 && item.Disabled {
 		return item.Credential.Priority != -1 || !item.Credential.Disabled
+	}
+	if isAntigravityWeeklyDepletedItem(item) && item.Priority == -1 {
+		return true
 	}
 	if item.Credential.Disabled != item.Disabled {
 		return true
