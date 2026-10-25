@@ -427,7 +427,8 @@ func dueProbes(ctx context.Context, store *state.Store, plan schedule.Plan, now 
 	for _, probe := range plan.Immediate {
 		provider := filterProvider(probe.Credential)
 		groupName := probeModelGroup(provider, modelGroup)
-		needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+		policy := dueProbesPolicy(provider)
+		needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: policy})
 		if err != nil {
 			return nil, err
 		}
@@ -439,8 +440,9 @@ func dueProbes(ctx context.Context, store *state.Store, plan schedule.Plan, now 
 		for _, probe := range group.Probes {
 			provider := filterProvider(probe.Credential)
 			groupName := probeModelGroup(provider, modelGroup)
+			policy := dueProbesPolicy(provider)
 			if !probe.NextProbeAt.After(now) {
-				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: policy})
 				if err != nil {
 					return nil, err
 				}
@@ -450,7 +452,7 @@ func dueProbes(ctx context.Context, store *state.Store, plan schedule.Plan, now 
 				continue
 			}
 			if store.HasEntry(probe.Credential.AuthIndex, groupName) {
-				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: state.ProbePolicy{}})
+				needsProbe, err := store.NeedsProbe(ctx, state.ProbeCheck{AuthIndex: probe.Credential.AuthIndex, Provider: provider, ModelGroup: groupName, Now: now, Policy: policy})
 				if err != nil {
 					return nil, err
 				}
@@ -465,6 +467,17 @@ func dueProbes(ctx context.Context, store *state.Store, plan schedule.Plan, now 
 		}
 	}
 	return result, nil
+}
+
+// dueProbesPolicy：Antigravity 使用 15m TTL（与 collect 内层一致），xAI 使用 24h；
+// Codex 保持空 ProbePolicy，避免 15m TTL 提前打穿分批 NextProbeAt。
+func dueProbesPolicy(provider core.Provider) state.ProbePolicy {
+	switch provider {
+	case core.ProviderAntigravity, core.ProviderXAI:
+		return probePolicyForProvider(provider, defaultProbeCacheTTL)
+	default:
+		return state.ProbePolicy{}
+	}
 }
 
 func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {
@@ -561,6 +574,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		freeDepletedPriority := cfg.PriorityRules.Codex.FreeDepletedPriority
 		freeDepletedDisabled := cfg.PriorityRules.Codex.FreeDepletedDisabled
 		paidDepletedDisabled := cfg.PriorityRules.Codex.PaidDepletedDisabled
+		antigravityDepletedDisabled := cfg.PriorityRules.Antigravity.DepletedDisabled
 		xaiFreePriority := cfg.PriorityRules.XAI.FreeDepletedPriority
 		xaiFreeDisabled := cfg.PriorityRules.XAI.FreeDepletedDisabled
 		xaiFreeParticipates := cfg.PriorityRules.XAI.FreeParticipatesPriority
@@ -575,6 +589,7 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 		options.CodexFreeDepletedPriority = &freeDepletedPriority
 		options.CodexFreeDepletedDisabled = &freeDepletedDisabled
 		options.CodexPaidDepletedDisabled = &paidDepletedDisabled
+		options.AntigravityDepletedDisabled = &antigravityDepletedDisabled
 		options.XAIFreeDepletedPriority = &xaiFreePriority
 		options.XAIFreeDepletedDisabled = &xaiFreeDisabled
 		options.XAIFreeParticipatesPriority = &xaiFreeParticipates

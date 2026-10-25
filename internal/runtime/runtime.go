@@ -173,7 +173,7 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata: Metadata{
 			Name:             config.PluginID,
-			Version:          "1.1.10",
+			Version:          "1.1.11",
 			Author:           "CPA Plugins",
 			GitHubRepository: "https://github.com/Cody292/credential-priority",
 			Description:      "Fresh evidence based credential priority management API.",
@@ -199,17 +199,18 @@ func configFields() []ConfigField {
 		{Name: "max_concurrency", Type: "integer", Description: localizedDescription("探测并发上限。默认 6。", "Probe concurrency limit. Default 6."), DefaultValue: defaults.MaxConcurrency},
 		{Name: "priority_rules.enabled", Type: "boolean", Description: localizedDescription("启用自定义优先级规则；关闭时使用内置策略。默认 false。", "Enable custom priority rules; when false, built-in strategy is used. Default false."), DefaultValue: rules.Enabled},
 		{Name: "priority_rules.antigravity.start_priority", Type: "integer", Description: localizedDescription("Antigravity 可用凭证起始优先级。默认 100。", "Antigravity start priority for available credentials. Default 100."), DefaultValue: rules.Antigravity.StartPriority},
+		{Name: "priority_rules.antigravity.depleted_disabled", Type: "boolean", Description: localizedDescription("Antigravity 额度为 0 时是否硬禁用。默认关闭/不禁用；开启后才禁用。显式 false 时仅降 priority=-1，不新增硬禁用，也不清除用户原有 Disabled。", "Hard-disable Antigravity when quota is 0. Default off/not disabled; enable to disable. Explicit false only lowers priority to -1, does not newly hard-disable, and does not clear an existing user Disabled."), DefaultValue: rules.Antigravity.DepletedDisabled},
 		{Name: "priority_rules.codex.start_priority", Type: "integer", Description: localizedDescription("Codex 可用凭证起始优先级。默认 100。", "Codex start priority for available credentials. Default 100."), DefaultValue: rules.Codex.StartPriority},
 		{Name: "priority_rules.codex.free_depleted_priority", Type: "integer", Description: localizedDescription("Codex Free 额度为 0 时写入的优先级。默认 -1。", "Priority written when Codex Free quota is 0. Default -1."), DefaultValue: rules.Codex.FreeDepletedPriority},
-		{Name: "priority_rules.codex.free_depleted_disabled", Type: "boolean", Description: localizedDescription("Codex Free 额度为 0 时是否禁用。默认 true。", "Disable Codex Free when quota is 0. Default true."), DefaultValue: rules.Codex.FreeDepletedDisabled},
-		{Name: "priority_rules.codex.paid_depleted_disabled", Type: "boolean", Description: localizedDescription("Codex Plus/Pro/Team 耗尽时是否禁用。true=禁用，false=保持启用。默认 false。", "Disable Codex Plus/Pro/Team when depleted. true=disable, false=keep enabled. Default false."), DefaultValue: rules.Codex.PaidDepletedDisabled},
+		{Name: "priority_rules.codex.free_depleted_disabled", Type: "boolean", Description: localizedDescription("Codex Free 额度为 0 时是否禁用。默认关闭/不禁用；开启后才禁用。", "Disable Codex Free when quota is 0. Default off/not disabled; enable to disable."), DefaultValue: rules.Codex.FreeDepletedDisabled},
+		{Name: "priority_rules.codex.paid_depleted_disabled", Type: "boolean", Description: localizedDescription("Codex Plus/Pro/Team 耗尽时是否禁用。默认关闭/不禁用；开启后才禁用。true=禁用，false=保持启用。", "Disable Codex Plus/Pro/Team when depleted. Default off/not disabled; enable to disable. true=disable, false=keep enabled."), DefaultValue: rules.Codex.PaidDepletedDisabled},
 		{Name: "priority_rules.xai.start_priority", Type: "integer", Description: localizedDescription("xAI 可用凭证起始优先级。默认 100。", "xAI start priority for available credentials. Default 100."), DefaultValue: rules.XAI.StartPriority},
 		{Name: "priority_rules.xai.free_depleted_priority", Type: "integer", Description: localizedDescription("xAI 免费额度耗尽时写入的优先级。默认 -1。", "Priority when xAI free usage is depleted. Default -1."), DefaultValue: rules.XAI.FreeDepletedPriority},
-		{Name: "priority_rules.xai.free_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 免费额度耗尽时是否硬禁用。默认 false（软禁用：仅降 priority，不 PatchDisabled）。", "Hard-disable when xAI free usage is depleted. Default false (soft-disable: lower priority only, no PatchDisabled)."), DefaultValue: rules.XAI.FreeDepletedDisabled},
+		{Name: "priority_rules.xai.free_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 免费额度耗尽时是否硬禁用。默认关闭/不禁用（软禁用：仅降 priority=-1；恢复流程可解除此前禁用状态，401 失效仍硬禁用）；开启后才禁用。", "Hard-disable when xAI free usage is depleted. Default off/not disabled (soft-disable: lowers priority to -1 only; recovery flow can clear a previous disabled state, 401 invalid credentials remain hard-disabled); enable to disable."), DefaultValue: rules.XAI.FreeDepletedDisabled},
 		{Name: "priority_rules.xai.free_participates_priority", Type: "boolean", Description: localizedDescription("Free 凭证是否参与优先级排序。默认 false（仅保留 429 耗尽/冷却/401）；显式 true 才 opt-in free-first。", "Whether Free credentials participate in priority sorting. Default false (keep 429 depletion/cooldown/401 only); set true to opt in free-first."), DefaultValue: rules.XAI.FreeParticipatesPriority},
 		{Name: "priority_rules.xai.weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 仅周限额耗尽时写入的优先级。默认 -1。", "Priority when only xAI weekly limit is depleted. Default -1."), DefaultValue: rules.XAI.WeeklyDepletedPriority},
 		{Name: "priority_rules.xai.monthly_and_weekly_depleted_priority", Type: "integer", Description: localizedDescription("xAI 周与月均耗尽时写入的优先级。默认 -1。", "Priority when xAI weekly and monthly are depleted. Default -1."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedPriority},
-		{Name: "priority_rules.xai.monthly_and_weekly_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 周与月均耗尽时是否禁用。默认 true。", "Disable when xAI weekly and monthly are depleted. Default true."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedDisabled},
+		{Name: "priority_rules.xai.monthly_and_weekly_depleted_disabled", Type: "boolean", Description: localizedDescription("xAI 周与月均耗尽时是否禁用。默认关闭/不禁用；开启后才禁用。", "Disable when xAI weekly and monthly are depleted. Default off/not disabled; enable to disable."), DefaultValue: rules.XAI.MonthlyAndWeeklyDepletedDisabled},
 	}
 }
 
