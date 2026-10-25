@@ -95,10 +95,11 @@ plugins:
         enabled: false
         antigravity:
           start_priority: 100
+          depleted_disabled: false
         codex:
           start_priority: 100
           free_depleted_priority: -1
-          free_depleted_disabled: true
+          free_depleted_disabled: false
           paid_depleted_disabled: false
         xai:
           start_priority: 100
@@ -106,7 +107,7 @@ plugins:
           free_depleted_disabled: false
           weekly_depleted_priority: -1
           monthly_and_weekly_depleted_priority: -1
-          monthly_and_weekly_depleted_disabled: true
+          monthly_and_weekly_depleted_disabled: false
 ```
 
 | Field | Description |
@@ -116,17 +117,18 @@ plugins:
 | `auto_apply` | Enables scheduled execution and write-back. Default: `false`. |
 | `provider_scope` | `all` handles every currently supported provider; or list one or more providers separated by `\|`, e.g. `antigravity\|codex\|xai`. Legacy `selected` + `selected_providers` remains supported. |
 | `antigravity_model_group` | Antigravity quota group: `gemini`, `claude_gpt`, or `gemini_4_argon`. |
-| `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used. Independent of top-level `enabled`. |
+| `priority_rules.enabled` | Enables custom priority rules. When disabled, built-in sorting is used (which also does not hard-disable on depletion by default). Independent of top-level `enabled`. Explicit user configurations will not be overwritten by default migrations. |
 | `interval` | Auto sort / probe batch step (default 15m). Disabled credentials also batch with this interval (no fixed 1h freeze). |
 | `immediate_probe_limit` / `active_group_size` | Immediate probe count and active batch size; disabled batches share `active_group_size` with active. |
 
-> **Configuration notes** (user-facing): Flat `priority_rules.*` keys are supported. Turn on `priority_rules.enabled` so each provider’s `start_priority` is applied. Disabled/depleted accounts no longer wait a fixed 1 hour—pacing follows `interval` and batch settings. Within ~24h of a quota reset, accounts with remaining quota are preferred (Antigravity/Codex free and OAuth paid xAI weekly long-windows included; xAI free excluded).
+> **Configuration notes** (user-facing): Flat `priority_rules.*` keys are supported. Turn on `priority_rules.enabled` so each provider’s `start_priority` and custom rules take effect; when disabled, the built-in strategy is used and all five depletion switches default to OFF / keep enabled (lowers priority only or keeps enabled, hard-disabling only when explicitly enabled; other switches do not clear existing user `Disabled`, while xAI Free recovery flow can clear a previous disabled state; 401 invalid credentials remain hard-disabled). Explicit user configurations will not be overwritten by default migrations. Disabled/depleted accounts no longer wait a fixed 1 hour—pacing follows `interval` and batch settings. Within ~24h of a quota reset, accounts with remaining quota are preferred (Antigravity/Codex free and OAuth paid xAI weekly long-windows included; xAI free excluded).
 
 ### Provider-Independent Rules
 
 Antigravity rules
 
 - `priority_rules.antigravity.start_priority`: start priority for available credentials. Default: `100`.
+- `priority_rules.antigravity.depleted_disabled`: whether to hard-disable when quota is 0. Default: `false` (OFF / keep enabled). When disabled (`false`), it only lowers `priority` to `-1`, does not add hard-disable on the current round of depletion, and does not clear an existing user `Disabled`; hard-disables only when explicitly enabled (`true`).
 - Only credentials with fresh quota evidence for the selected Antigravity model group are sorted.
 - Failed quota fetches and unavailable remaining quota keep the current priority and enabled state.
 
@@ -134,8 +136,8 @@ Codex rules
 
 - `priority_rules.codex.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.codex.free_depleted_priority`: priority for depleted Free credentials. Default: `-1`.
-- `priority_rules.codex.free_depleted_disabled`: disables depleted Free credentials. Default: `true`.
-- `priority_rules.codex.paid_depleted_disabled`: disable Plus/Pro/Team when depleted; `true`=disable, `false`=keep enabled. Default: `false`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
+- `priority_rules.codex.free_depleted_disabled`: whether to disable Free credentials when quota is 0. Default: `false` (OFF / keep enabled). When `false`, it only lowers priority to `free_depleted_priority` (`-1`), does not add hard-disable on depletion, and does not clear an existing user `Disabled`; disables only when explicitly set to `true`.
+- `priority_rules.codex.paid_depleted_disabled`: whether to disable Plus/Pro/Team when depleted. Default: `false` (OFF / keep enabled). When `false`, credentials remain enabled and are not disabled on depletion, and existing user `Disabled` is not cleared; disables only when explicitly set to `true`. Legacy `paid_depleted_keeps_enabled` is still accepted (inverted).
 
 xAI rules
 
@@ -150,7 +152,7 @@ xAI rules
 
 - Business quota is accumulated from host `usage.handle`, not from chat probes.
 - **2×429 within 30 minutes** → `priority=-1` **soft-disable** (lower priority only); independent of whether Free joins sorting; still applies by default.
-- `free_depleted_disabled` defaults to `false` (soft-disable, no hard `disabled`); set `true` only for hard disable.
+- `free_depleted_disabled` defaults to `false` (OFF / keep enabled, soft-disable: lowers priority to -1 only; recovery flow can clear a previous disabled state); set `true` only for hard disable; 401 invalid credentials still trigger hard-disable; accounts resume normal scheduling after 24h cooldown per actual flow.
 - Cooldown anchor: `first_success_at + 24h` (or the depleting failure time + 24h if no success yet); after that, recovery can resume.
 
 **401 AuthInvalid (hard disable)**
@@ -162,11 +164,11 @@ xAI rules
 
 - `priority_rules.xai.start_priority`: start priority for available credentials. Default: `100`.
 - `priority_rules.xai.free_depleted_priority`: priority when free usage is depleted (soft-disable). Default: `-1`.
-- `priority_rules.xai.free_depleted_disabled`: hard-disables free usage depleted credentials. Default: `false` (soft-disable: lower priority only).
+- `priority_rules.xai.free_depleted_disabled`: whether to hard-disable when free usage is depleted. Default: `false` (OFF / keep enabled; soft-disable lowers priority to -1 only; recovery flow can clear a previous disabled state, and 401 AuthInvalid still triggers hard-disable); set `true` only for hard disable.
 - `priority_rules.xai.free_participates_priority`: whether Free joins positive priority sorting / free-first. Default: `false`; set `true` to opt in. When false, 429 depletion, cooldown, and 401 are unchanged.
 - `priority_rules.xai.weekly_depleted_priority`: priority when only weekly limit is depleted. Default: `-1` (not disabled).
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`: priority when monthly and weekly are depleted. Default: `-1`.
-- `priority_rules.xai.monthly_and_weekly_depleted_disabled`: disables when monthly and weekly are depleted. Default: `true`.
+- `priority_rules.xai.monthly_and_weekly_depleted_disabled`: whether to disable when monthly and weekly are both depleted. Default: `false` (OFF / keep enabled). When `false`, it only lowers priority to -1, does not add hard-disable on depletion, and does not clear an existing user `Disabled`; disables only when explicitly set to `true`. Compatible with legacy `monthly_depleted_disabled`.
 
 ## Management Page and API
 

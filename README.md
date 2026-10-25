@@ -101,10 +101,11 @@ plugins:
         enabled: false
         antigravity:
           start_priority: 100
+          depleted_disabled: false
         codex:
           start_priority: 100
           free_depleted_priority: -1
-          free_depleted_disabled: true
+          free_depleted_disabled: false
           paid_depleted_disabled: false
         xai:
           start_priority: 100
@@ -112,7 +113,7 @@ plugins:
           free_depleted_disabled: false
           weekly_depleted_priority: -1
           monthly_and_weekly_depleted_priority: -1
-          monthly_and_weekly_depleted_disabled: true
+          monthly_and_weekly_depleted_disabled: false
 ```
 
 字段说明：
@@ -124,17 +125,18 @@ plugins:
 | `auto_apply` | 是否由定时器自动执行并写回排序结果，默认 `false`。 |
 | `provider_scope` | `all` 处理全部当前支持的提供商；也可填单个或多个提供商，多个用 `\|` 分隔，例如 `antigravity\|codex\|xai`。兼容旧配置 `selected` + `selected_providers`。 |
 | `antigravity_model_group` | Antigravity 配额模型组，支持 `gemini`、`claude_gpt` 与 `gemini_4_argon`。 |
-| `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略。与顶层 `enabled` 独立。 |
+| `priority_rules.enabled` | 是否启用自定义排序规则；关闭时使用内置排序策略（默认也不因耗尽硬禁用）。与顶层 `enabled` 独立。用户的显式配置不会被默认迁移覆盖。 |
 | `interval` | 自动排序/探测分批时间步长（默认 15m）。disabled 凭证分批递进也使用该间隔（不再使用固定 1h 冷冻）。 |
 | `immediate_probe_limit` / `active_group_size` | 控制本轮立即探测数量与 active 分批大小；disabled 分批组大小与 active 共用 `active_group_size`。 |
 
-> **配置要点**（用户向）：支持扁平 `priority_rules.*` 配置；打开 `priority_rules.enabled` 后各提供商 `start_priority` 才会按你的值生效。禁用/耗尽凭证不再固定等 1 小时，节奏跟 `interval` 与分批参数走。临近额度刷新约 24 小时内且仍有额度时优先用完（Antigravity/Codex 免费以及 OAuth 付费 xAI 官方周长窗适用，xAI 免费不参与）。
+> **配置要点**（用户向）：支持扁平 `priority_rules.*` 配置；打开 `priority_rules.enabled` 后各提供商 `start_priority` 与自定义规则才会按配置生效；关闭时使用内置策略，五个耗尽开关默认均为关闭/不禁用（仅降权或保持启用，显式开启才硬禁用；其他开关不清除已有用户 Disabled，xAI Free 恢复流程可解除此前禁用状态，401 凭证失效仍硬禁用）；用户的显式配置不会被默认迁移覆盖。禁用/耗尽凭证不再固定等 1 小时，节奏跟 `interval` 与分批参数走。临近额度刷新约 24 小时内且仍有额度时优先用完（Antigravity/Codex 免费以及 OAuth 付费 xAI 官方周长窗适用，xAI 免费不参与）。
 
 ### 提供商独立排序规则
 
 Antigravity 规则
 
 - `priority_rules.antigravity.start_priority`：可用凭证的起始优先级，默认 `100`。
+- `priority_rules.antigravity.depleted_disabled`：额度为 0 时是否硬禁用，默认 `false`（关闭/不禁用）；关闭时仅降 `priority=-1`，不因本轮耗尽新增硬禁用，也不清除用户原有 `Disabled`；显式设为 `true`（开启）时才硬禁用。
 - 只排序本轮成功获取到所选模型组配额的 Antigravity 凭证。
 - 配额获取失败或剩余额度不可用时保留当前优先级与启用状态。
 
@@ -142,8 +144,8 @@ Codex 规则
 
 - `priority_rules.codex.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.codex.free_depleted_priority`：Free 凭证额度为 0 时写入的优先级，默认 `-1`。
-- `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `true`。
-- `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用；`true`=禁用，`false`=保持启用，默认 `false`。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
+- `priority_rules.codex.free_depleted_disabled`：Free 凭证额度为 0 时是否禁用，默认 `false`（关闭/不禁用）；关闭时仅降优先级至 `free_depleted_priority`（`-1`），不因本轮耗尽新增硬禁用，也不清除已有用户 `Disabled`；显式设为 `true`（开启）时才禁用。
+- `priority_rules.codex.paid_depleted_disabled`：Plus、Pro、Team 额度耗尽时是否禁用，默认 `false`（关闭/不禁用，保持启用）；关闭时不因耗尽禁用，也不清除已有用户 `Disabled`；显式设为 `true`（开启）时才禁用。兼容旧键 `paid_depleted_keeps_enabled`（语义取反）。
 
 xAI 规则
 
@@ -158,7 +160,7 @@ xAI 规则
 
 - 业务额度由宿主 `usage.handle` 累计，不依赖 chat 探测。
 - **30 分钟内累计 2 次** 429 → `priority=-1` **软禁用**（仅降优先级）；与 free 是否参与排序无关，默认仍生效。
-- `free_depleted_disabled` 默认 `false`（软禁用，不硬 `disabled`）；显式设为 `true` 时才硬禁用。
+- `free_depleted_disabled` 默认 `false`（关闭/不禁用，软禁用仅降 priority=-1；恢复流程可解除此前禁用状态）；显式设为 `true`（开启）时才硬禁用；401 凭证失效仍会硬禁用；24h 冷却期满后按实际流程恢复调度。
 - 冷却锚点：`first_success_at + 24h`（若无成功记录则用触发耗尽的失败时刻 + 24h）；到期后可恢复。
 
 **401 AuthInvalid（硬禁用）**
@@ -170,11 +172,11 @@ xAI 规则
 
 - `priority_rules.xai.start_priority`：可用凭证的起始优先级，默认 `100`。
 - `priority_rules.xai.free_depleted_priority`：免费额度耗尽（软禁用）时写入的优先级，默认 `-1`。
-- `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否硬禁用，默认 `false`（软禁用：仅降 priority）。
+- `priority_rules.xai.free_depleted_disabled`：免费额度耗尽时是否硬禁用，默认 `false`（关闭/不禁用，软禁用仅降 priority=-1；恢复流程可解除此前禁用状态，401 AuthInvalid 仍会硬禁用）；显式设为 `true`（开启）时才硬禁用。
 - `priority_rules.xai.free_participates_priority`：Free 是否参与正优先级排序 / free-first，默认 `false`；显式 `true` 才 opt-in。关闭时不影响 429 耗尽、冷却与 401。
 - `priority_rules.xai.weekly_depleted_priority`：仅周限额耗尽时写入的优先级，默认 `-1`（不禁用）。
 - `priority_rules.xai.monthly_and_weekly_depleted_priority`：周与月均耗尽时写入的优先级，默认 `-1`。
-- `priority_rules.xai.monthly_and_weekly_depleted_disabled`：周与月均耗尽时是否禁用，默认 `true`。
+- `priority_rules.xai.monthly_and_weekly_depleted_disabled`：周与月均耗尽时是否禁用，默认 `false`（关闭/不禁用）；关闭时仅降 priority=-1，不因本轮耗尽新增硬禁用，也不清除已有用户 `Disabled`；显式设为 `true`（开启）时才禁用。兼容旧键 `monthly_depleted_disabled`。
 
 ## 管理页面与接口
 
