@@ -19,8 +19,7 @@ type parsedWindow struct {
 	remaining int64
 }
 
-func pickEffectiveWindow(usage whamUsage, observedAt time.Time) (effectiveWindow, bool) {
-	planType := inferPlanType(usage.PlanType)
+func pickEffectiveWindow(usage whamUsage, observedAt time.Time, planType core.PlanType) (effectiveWindow, bool) {
 	if planType == core.PlanTypeFree {
 		return pickFreeWindow(usage, observedAt)
 	}

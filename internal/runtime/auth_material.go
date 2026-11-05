@@ -34,6 +34,11 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 			enriched[index].PriorityMissing = enriched[index].PriorityMissing || topLevelFieldMissing(rawJSON, "priority")
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON), accountIDFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
+			if (enriched[index].PlanType == core.PlanTypeUnknown || enriched[index].PlanType == "") &&
+				(credential.Provider == core.ProviderCodex ||
+					(credential.Provider == "" && credential.Type == core.CredentialTypeCodex)) {
+				enriched[index].PlanType = planTypeFromJSON(rawJSON)
+			}
 		}
 		materials[credential.AuthIndex] = authMaterial{
 			accessToken: accessTokenFromJSON(rawJSON),
@@ -45,6 +50,21 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 		}
 	}
 	return enriched, materials, nil
+}
+
+func planTypeFromJSON(raw json.RawMessage) core.PlanType {
+	var document struct {
+		PlanType core.PlanType `json:"plan_type"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return core.PlanTypeUnknown
+	}
+	switch document.PlanType {
+	case core.PlanTypeFree, core.PlanTypePlus, core.PlanTypePro, core.PlanTypeTeam:
+		return document.PlanType
+	default:
+		return core.PlanTypeUnknown
+	}
 }
 
 func readCredentialAuthJSON(ctx context.Context, client *host.Client, authIndex string) (json.RawMessage, error) {

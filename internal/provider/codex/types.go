@@ -55,6 +55,7 @@ type ProbeRequest struct {
 	AuthIndex   string
 	AccountID   string
 	AccessToken string
+	PlanType    core.PlanType
 }
 
 type clock interface {

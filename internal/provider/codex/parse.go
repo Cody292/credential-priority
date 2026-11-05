@@ -39,14 +39,18 @@ type whamWindow struct {
 }
 
 // ParseWhamUsage 将 wham/usage JSON 解析为可信额度窗口的 fresh probe 结果。
-func ParseWhamUsage(raw []byte, observedAt time.Time) ProbeResult {
+func ParseWhamUsage(raw []byte, observedAt time.Time, fallbackPlanType core.PlanType) ProbeResult {
 	var usage whamUsage
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&usage); err != nil {
 		return failedResult(observedAt, "parse wham usage failed")
 	}
-	result, ok := pickEffectiveWindow(usage, observedAt)
+	planType := inferPlanType(usage.PlanType)
+	if planType == core.PlanTypeUnknown {
+		planType = inferPlanType(string(fallbackPlanType))
+	}
+	result, ok := pickEffectiveWindow(usage, observedAt, planType)
 	if !ok {
 		return failedResult(observedAt, "trusted quota window unavailable")
 	}
@@ -59,7 +63,7 @@ func ParseWhamUsage(raw []byte, observedAt time.Time) ProbeResult {
 		Freshness:         core.FreshnessFresh,
 		ProbeStatus:       core.ProbeStatusReady,
 		Status:            StatusReady,
-		PlanType:          inferPlanType(usage.PlanType),
+		PlanType:          planType,
 	}
 }
 

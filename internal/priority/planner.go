@@ -428,9 +428,11 @@ func ensureUniqueProviderPriorities(items []PlanItem, options Options) {
 			continue
 		}
 		if !providerGroupHasPriorityCollision(items, group) && !providerGroupNeedsStartRealign(items, group, options) {
-			// 无碰撞且已从 start 对齐时仍可能因局部写回导致「全员 start」；
-			// providerGroupHasPriorityCollision 已覆盖重复值；此处保留 full re-pack 仅在有碰撞时。
-			continue
+			if provider != core.ProviderCodex || !options.PaidFirst || !providerGroupHasPaidFirstInversion(items, group) {
+				// 无碰撞且已从 start 对齐时仍可能因局部写回导致「全员 start」；
+				// providerGroupHasPriorityCollision 已覆盖重复值；此处保留 full re-pack 仅在有碰撞时。
+				continue
+			}
 		}
 		slices.SortStableFunc(group, func(left int, right int) int {
 			return compareUniquenessCandidates(items[left], items[right], options)
@@ -505,6 +507,22 @@ func providerGroupHasFreshPositive(items []PlanItem, group []int) bool {
 	return false
 }
 
+func providerGroupHasPaidFirstInversion(items []PlanItem, group []int) bool {
+	for _, leftIndex := range group {
+		left := items[leftIndex]
+		if paidRank(left.PlanType) == 0 {
+			continue
+		}
+		for _, rightIndex := range group {
+			right := items[rightIndex]
+			if paidRank(right.PlanType) == 0 && left.Priority <= right.Priority {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func providerGroupHasPriorityCollision(items []PlanItem, group []int) bool {
 	seen := make(map[int]struct{}, len(group))
 	for _, index := range group {
@@ -540,16 +558,31 @@ func capExcludedXAIFreePriorities(items []PlanItem, options Options) {
 }
 
 func providerGroupNeedsStartRealign(items []PlanItem, group []int, options Options) bool {
-	// 预留：当前仅在碰撞时 re-pack；保留钩子便于后续策略扩展。
-	_ = options
-	_ = items
-	_ = group
+	if !options.PaidFirst {
+		return false
+	}
+	for _, leftIndex := range group {
+		left := items[leftIndex]
+		if planItemProvider(left) != core.ProviderCodex || paidRank(left.PlanType) == 0 {
+			continue
+		}
+		for _, rightIndex := range group {
+			right := items[rightIndex]
+			if planItemProvider(right) == core.ProviderCodex && paidRank(right.PlanType) == 0 && left.Priority <= right.Priority {
+				return true
+			}
+		}
+	}
 	return false
 }
 
 func compareUniquenessCandidates(left PlanItem, right PlanItem, options Options) int {
 	leftFreshPositive := left.EvidenceFresh && left.Remaining != nil && *left.Remaining > 0
 	rightFreshPositive := right.EvidenceFresh && right.Remaining != nil && *right.Remaining > 0
+	if options.PaidFirst && planItemProvider(left) == core.ProviderCodex && planItemProvider(right) == core.ProviderCodex &&
+		leftFreshPositive != rightFreshPositive && paidRank(left.PlanType) != paidRank(right.PlanType) {
+		return paidRank(right.PlanType) - paidRank(left.PlanType)
+	}
 	switch {
 	case leftFreshPositive && rightFreshPositive:
 		return compareCandidates(left, right, options)

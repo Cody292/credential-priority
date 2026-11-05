@@ -228,7 +228,7 @@ func (p probeSet) probeAndRecord(ctx context.Context, input probeAndRecordInput)
 	if accountID == "" {
 		accountID = input.authMaterial.accountID
 	}
-	result := p.codex.Probe(ctx, codex.ProbeRequest{Provider: input.provider, AuthIndex: input.credential.AuthIndex, AccountID: accountID, AccessToken: input.authMaterial.accessToken})
+	result := p.codex.Probe(ctx, codex.ProbeRequest{Provider: input.provider, AuthIndex: input.credential.AuthIndex, AccountID: accountID, AccessToken: input.authMaterial.accessToken, PlanType: input.credential.PlanType})
 	return recordCodexProbeResult(ctx, input.store, result, input.now)
 }
 

@@ -10,6 +10,7 @@ credential-priority.dll
 *.exe
 
 # 本地运行与缓存
+.browser-memory/
 refresh-cache.json
 *.log
 *.tmp

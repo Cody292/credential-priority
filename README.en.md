@@ -36,7 +36,7 @@ Load plugin
   -> Fetch CPA credential list through host.auth.list
   -> Filter currently supported providers by provider_scope (all or antigravity|codex|xai)
        - Antigravity: probe remaining quota for the selected model group
-       - Codex: probe availability by account plan and quota state
+       - Codex: probe availability by account plan and quota state (falls back to credential plan configuration if omitted in response)
         - xAI: FetchPlan (settings / billing / JWT) classifies free/paid; auto no longer multi-model chat probes
              Business quota via usage.handle; 2×429 within 30 minutes → free soft-disable; 401 AuthInvalid → hard-disable
              Free does not join priority sorting by default (`free_participates_priority` default false)

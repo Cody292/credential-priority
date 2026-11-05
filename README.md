@@ -42,7 +42,7 @@ CLIProxyAPI (CPA) 凭证优先级自动调整插件。插件 ID、动态库基�
   -> 通过 host.auth.list 获取 CPA 凭证列表
   -> 按 provider_scope（all 或 antigravity|codex|xai）筛选当前支持的提供商
        - Antigravity：按所选模型组探测剩余额度
-       - Codex：按账号计划与额度状态探测可用性
+       - Codex：按账号计划与额度状态探测可用性（缺失计划类型时结合凭证配置准确解析额度窗口）
         - xAI：FetchPlan（settings / billing / JWT）识别 free/paid；auto 不再 chat 多模型探额度
              业务额度由 usage.handle 累计；30 分钟内 2 次 429 → free 软禁用；401 AuthInvalid → 硬禁用
              Free 默认不参与优先级排序（free_participates_priority 默认 false）

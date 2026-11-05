@@ -43,7 +43,7 @@ func (p Prober) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	if response.StatusCode != http.StatusOK {
 		return failedProbe(request, observedAt, fmt.Sprintf("wham usage status %d", response.StatusCode))
 	}
-	result := ParseWhamUsage(response.Body, observedAt)
+	result := ParseWhamUsage(response.Body, observedAt, request.PlanType)
 	result.Provider = request.Provider
 	result.AuthIndex = request.AuthIndex
 	return result
